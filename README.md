@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚖️ SynodOSS
+#  SynodOSS
 
 ### Autonomous Multi-Agent Open Source Fork Reconciliation Platform
 
@@ -80,7 +80,7 @@ A->>A: Generate PR
 ```
 
 
-## 🚀 Overview
+##  Overview
 
 SynodOSS is an autonomous multi-agent system designed to solve one of the most expensive problems in enterprise software engineering:
 
@@ -105,7 +105,7 @@ SynodOSS introduces an AI-powered Engineering Council capable of:
 - Creating Pull Request artifacts
 
 
-## 🎯 Problem Statement
+##  Problem Statement
 
 Traditional tools such as:
 
@@ -127,7 +127,7 @@ As a result, organizations often spend weeks or months reconciling heavily diver
 
 SynodOSS addresses this problem through structured multi-agent reasoning and verification-driven reconciliation.
 
-## ⚙️ Technology Stack
+##  Technology Stack
 
 | Layer | Technology |
 |---------|------------|
@@ -306,7 +306,7 @@ npm install
 
 ---
 
-# 🚀 Running SynodOSS
+#  Running SynodOSS
 
 SynodOSS uses **3 terminals**.
 
@@ -365,7 +365,7 @@ Runs:
 
 ---
 
-# 🔄 End-to-End Workflow
+#  End-to-End Workflow
 
 ```mermaid
 flowchart LR
@@ -402,7 +402,7 @@ L --> M
 
 ---
 
-# ⚖️ Debate Lifecycle
+#  Debate Lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -424,7 +424,7 @@ Consensus --> [*]
 
 ---
 
-# 🔍 Verification Pipeline
+#  Verification Pipeline
 
 SynodOSS never trusts LLM output directly.
 
@@ -481,7 +481,7 @@ Ensures:
 
 ---
 
-# 🧠 Consensus Formula
+#  Consensus Formula
 
 Consensus confidence is calculated mathematically.
 
@@ -504,7 +504,7 @@ No hardcoded confidence values exist anywhere in the system.
 
 ---
 
-# 🛡️ Trust Score
+#  Trust Score
 
 Trust is generated independently from confidence.
 
@@ -529,7 +529,7 @@ Purpose:
 
 ---
 
-# 📑 Architecture Decision Records (ADR)
+#  Architecture Decision Records (ADR)
 
 Every reconciliation generates:
 
@@ -555,7 +555,7 @@ This creates a complete audit trail for every architectural decision.
 
 ---
 
-# 🔧 Generated Patch Example
+#  Generated Patch Example
 
 ```diff
 --- upstream/api.py
@@ -579,7 +579,7 @@ Generated patches:
 
 ---
 
-# 📬 Pull Request Generation
+#  Pull Request Generation
 
 Every successful reconciliation generates:
 
@@ -607,7 +607,7 @@ interface improvements.
 
 ---
 
-# 📊 Evaluation Dashboard
+#  Evaluation Dashboard
 
 Microsoft Foundry Evaluation Metrics:
 
@@ -621,7 +621,7 @@ Microsoft Foundry Evaluation Metrics:
 
 ---
 
-# 🎬 Demo Flow
+#  Demo Flow
 
 ```mermaid
 sequenceDiagram
@@ -655,7 +655,7 @@ Patch->>User: PR Generated
 
 ---
 
-# 🌟 Why SynodOSS?
+#  Why SynodOSS?
 
 Unlike traditional tools:
 
@@ -669,7 +669,7 @@ Unlike traditional tools:
 
 ---
 
-# 🚧 Future Roadmap
+#  Future Roadmap
 
 ### Near Term
 
@@ -688,7 +688,7 @@ Unlike traditional tools:
 
 ---
 
-# 👥 Team
+#  Team
 
 Built for the Microsoft Agents Hackathon.
 
