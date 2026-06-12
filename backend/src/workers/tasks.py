@@ -61,6 +61,7 @@ def run_repository_scan(self, scan_id: int, upstream_url: str, fork_url: str):
         
     except Exception as e:
         logger.error(f"Scan {scan_id}: Failed with error: {str(e)}")
+        persistence.db.rollback()
         persistence.update_scan_status(scan_id, ScanStatus.failed)
     finally:
         db.close()

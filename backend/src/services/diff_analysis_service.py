@@ -93,7 +93,11 @@ class DiffAnalysisService:
                 fork_repo.create_remote('upstream_synod', upstream_path)
             fork_repo.remotes.upstream_synod.fetch()
             
-            diff_text = fork_repo.git.diff('upstream_synod/HEAD', 'HEAD', unified=3)
+            raw_diff_text = fork_repo.git.diff('upstream_synod/HEAD', 'HEAD', unified=3)
+            # Remove any utf-16 surrogate characters that might break database insertion
+            import re
+            diff_text = re.sub(r'[\ud800-\udfff]', '', raw_diff_text)
+            
             current_file = None
             current_hunk = []
             
@@ -130,6 +134,9 @@ class DiffAnalysisService:
                     "fork_commits": []
                 })
                 
+            from src.services.architecture_analyzer import ArchitectureAnalyzerService
+            analyzer = ArchitectureAnalyzerService(self.base_dir)
+
             for unit in units:
                 fp = unit["file_path"]
                 try:
@@ -137,8 +144,24 @@ class DiffAnalysisService:
                     fork_commits = fork_repo.git.log('HEAD', '--not', 'upstream_synod/HEAD', '--format=%H', '--', fp).split()[:5]
                     unit["upstream_commits"] = up_commits
                     unit["fork_commits"] = fork_commits
+
+                    # Run AST extraction & impact analysis
+                    impact = analyzer.analyze_hunk_impact(fork_path, fp, unit["diff_hunk"])
+                    unit.update(impact)
+
                 except Exception:
-                    pass
+                    # Apply defaults if git log or ast parsing fails
+                    unit["upstream_commits"] = []
+                    unit["fork_commits"] = []
+                    unit.update({
+                        "module": fp,
+                        "symbol": "Unknown",
+                        "symbol_type": "unknown",
+                        "impact_radius": 0,
+                        "callers": [],
+                        "dependencies": [],
+                        "architectural_layer": "Unknown Layer"
+                    })
         except Exception as e:
             print(f"Failed to extract units: {e}")
         return units

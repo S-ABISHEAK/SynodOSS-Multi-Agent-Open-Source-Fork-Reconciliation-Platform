@@ -91,6 +91,12 @@ class AgentManager:
             parts.append(f"\n=== YOUR TASK ===")
             parts.append(extra_instruction)
 
+        if context.get("validation_report") and "Judge" in extra_instruction:
+            parts.append(f"\n=== HARD EVIDENCE VALIDATION REPORT ===")
+            parts.append("The EvidenceResolver service has strictly validated the claims made in this debate:")
+            parts.append(context["validation_report"])
+            parts.append("You MUST use this report to invalidate any HALLUCINATED or UNGROUNDED claims.")
+
         return "\n".join(parts)
 
     def prompt_agent(self, agent_type: str, context: dict, previous_messages: list = None) -> dict:

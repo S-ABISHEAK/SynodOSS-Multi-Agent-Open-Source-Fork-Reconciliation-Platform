@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 from enum import Enum
 
 # ──────────────────────────────────────────────
@@ -67,13 +67,14 @@ class AgentResponseSchema(BaseModel):
 # ──────────────────────────────────────────────
 class ArchitectResolutionSchema(BaseModel):
     agent_role: str = "Architect Reviewer"
-    resolution_action: ResolutionAction = Field(
-        ...,
-        description=(
-            "You MUST choose exactly one of: ACCEPT_UPSTREAM, REJECT_UPSTREAM, "
-            "MERGE_PARTIAL, REFACTOR_ADAPTER, ESCALATE_HUMAN"
-        )
-    )
+    resolution_action: Literal[
+        "ADAPTER_PATTERN", 
+        "FACADE_PATTERN", 
+        "COMPATIBILITY_LAYER", 
+        "MIGRATION_LAYER", 
+        "WRAPPER_STRATEGY", 
+        "MANUAL_ESCALATION"
+    ] = Field(description="Strict enum representing the structural architecture decision.")
     rationale: str = Field(
         ...,
         description="Why you chose this action. Must reference specific symbols from ast_summary and arguments from the debate."

@@ -39,6 +39,14 @@ class RoundType(str, enum.Enum):
     cross_examination = "cross_examination"
     review = "review"
 
+class ArchitecturalProposalType(str, enum.Enum):
+    ADAPTER_PATTERN = "ADAPTER_PATTERN"
+    FACADE_PATTERN = "FACADE_PATTERN"
+    COMPATIBILITY_LAYER = "COMPATIBILITY_LAYER"
+    MIGRATION_LAYER = "MIGRATION_LAYER"
+    WRAPPER_STRATEGY = "WRAPPER_STRATEGY"
+    MANUAL_ESCALATION = "MANUAL_ESCALATION"
+
 class Repository(Base):
     __tablename__ = "repositories"
     id = Column(Integer, primary_key=True, index=True)
@@ -102,6 +110,13 @@ class ReconciliationUnit(Base):
     scan_id = Column(Integer, ForeignKey("repository_scans.id"))
     file_path = Column(String)
     diff_hunk = Column(String)
+    module = Column(String, nullable=True)
+    symbol = Column(String, nullable=True)
+    symbol_type = Column(String, nullable=True)
+    impact_radius = Column(Integer, nullable=True)
+    callers = Column(JSON, nullable=True)
+    dependencies = Column(JSON, nullable=True)
+    architectural_layer = Column(String, nullable=True)
     upstream_commits = Column(JSON)
     fork_commits = Column(JSON)
     complexity_score = Column(Float)
