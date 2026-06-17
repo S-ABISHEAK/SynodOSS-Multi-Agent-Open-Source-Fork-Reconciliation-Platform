@@ -68,12 +68,15 @@ class AgentResponseSchema(BaseModel):
 class ArchitectResolutionSchema(BaseModel):
     agent_role: str = "Architect Reviewer"
     resolution_action: Literal[
+        "MERGE_FULL",
+        "MERGE_PARTIAL",
         "ADAPTER_PATTERN", 
         "FACADE_PATTERN", 
         "COMPATIBILITY_LAYER", 
         "MIGRATION_LAYER", 
         "WRAPPER_STRATEGY", 
-        "MANUAL_ESCALATION"
+        "MANUAL_ESCALATION",
+        "ESCALATE_TO_HUMAN",
     ] = Field(description="Strict enum representing the structural architecture decision.")
     rationale: str = Field(
         ...,
@@ -137,6 +140,37 @@ class VerificationResponseSchema(BaseModel):
     adjusted_confidence_penalty: float = Field(
         ...,
         description="Penalty to subtract from consensus confidence (0.0 = no penalty, 1.0 = full invalidation)."
+    )
+    # Stage 2 additions — Trust Score components (graph_02.md)
+    evidence_validity_score: float = Field(
+        default=0.0,
+        description="Ratio of valid evidence to total evidence (0.0–1.0). Derived from validation_report."
+    )
+    graph_consistency_score: float = Field(
+        default=0.0,
+        description=(
+            "Score (0.0–1.0) reflecting how well agent claims align with the dependency graph. "
+            "1.0 = all architectural claims are consistent with graph edges. "
+            "0.0 = claims contradict or ignore graph data entirely."
+        )
+    )
+    agent_agreement_score: float = Field(
+        default=0.0,
+        description=(
+            "Score (0.0–1.0) measuring alignment between Advocate and Defender conclusions. "
+            "Derived from conceded_points vs contested_points ratios."
+        )
+    )
+    trust_score: float = Field(
+        default=0.0,
+        description=(
+            "Final composite Trust Score (0.0–1.0) calculated as: "
+            "trust_score = (evidence_validity_score * 0.40) "
+            "+ (graph_consistency_score * 0.35) "
+            "+ (agent_agreement_score * 0.15) "
+            "+ ((1.0 - adjusted_confidence_penalty) * 0.10). "
+            "Do NOT hardcode this value; compute it from the other fields."
+        )
     )
 
 

@@ -3,6 +3,7 @@ from src.agents.upstream_advocate import UpstreamAdvocate
 from src.agents.enterprise_defender import EnterpriseDefender
 from src.agents.architect_reviewer import ArchitectReviewer
 from src.agents.verification_judge import VerificationJudge
+from src.agents.impact_analyst import ImpactAnalyst, ImpactReport
 from src.agents.base_agent import (
     AgentResponseSchema,
     ArchitectResolutionSchema,
@@ -22,6 +23,7 @@ class AgentManager:
         self.defender = EnterpriseDefender()
         self.architect = ArchitectReviewer()
         self.judge = VerificationJudge()
+        self.impact_analyst = ImpactAnalyst()
 
     def _build_user_prompt(self, context: dict, previous_messages: list = None, extra_instruction: str = "") -> str:
         """Build a structured, readable user prompt from the rich context dict."""
@@ -60,6 +62,39 @@ class AgentManager:
 
         parts.append(f"\n--- DIFF PREVIEW ---")
         parts.append(context.get("diff_preview", "(no diff)"))
+
+        # ── Graph-Aware Impact Context (graph_02.md) ─────────────────────
+        impact_score = context.get("impact_score", 0.0)
+        affected_fns = context.get("affected_functions", [])
+        affected_mods = context.get("affected_modules", [])
+        critical_paths = context.get("critical_paths", [])
+        dep_depth = context.get("dependency_depth", 0)
+        changed_symbol = context.get("changed_symbol", "Unknown")
+
+        if impact_score > 0 or affected_fns or critical_paths:
+            parts.append(f"\n--- GRAPH IMPACT ANALYSIS ---")
+            parts.append(f"Changed Symbol: {changed_symbol}")
+            parts.append(f"Impact Score: {impact_score:.1f} / 100")
+            parts.append(f"Dependency Depth: {dep_depth}")
+            parts.append(f"Affected Functions ({len(affected_fns)}): {', '.join(affected_fns[:10])}")
+            parts.append(f"Affected Modules ({len(affected_mods)}): {', '.join(affected_mods[:10])}")
+            if critical_paths:
+                parts.append(f"Critical Paths:")
+                for path in critical_paths[:3]:
+                    parts.append(f"  → {' → '.join(path)}")
+
+        # Impact Analyst Report (injected if available)
+        if context.get("impact_report"):
+            parts.append(f"\n--- IMPACT ANALYST REPORT ---")
+            report = context["impact_report"]
+            parts.append(f"Risk Level: {report.get('risk_level', '?')}")
+            parts.append(f"Blast Radius: {report.get('blast_radius_summary', '?')}")
+            parts.append(f"Dependency Chain: {report.get('dependency_chain_summary', '?')}")
+            key_risks = report.get("key_risks", [])
+            if key_risks:
+                parts.append(f"Key Risks:")
+                for risk in key_risks:
+                    parts.append(f"  - {risk}")
 
         upstream_content = context.get("upstream_file_content", "")
         if upstream_content and not upstream_content.startswith("(file not found"):
@@ -133,6 +168,20 @@ class AgentManager:
         logger.info(f"Prompting {agent_type} (context_len={len(user_prompt)})")
         response = self.llm.generate(system_prompt, user_prompt, schema=schema)
         response["agent_role"] = agent_type  # Ensure agent_role is always set
+        return response
+
+    def prompt_impact_analyst(self, context: dict) -> dict:
+        """Pre-debate step (graph_02.md): Impact Analyst produces blast radius report."""
+        system_prompt = self.impact_analyst.build_system_prompt()
+        extra = (
+            "Produce your ImpactReport now. Use the GRAPH IMPACT ANALYSIS section in the context. "
+            "Derive risk_level from impact_score. Describe the dependency chain from critical_paths. "
+            "List at least one key_risk per affected_function if the list is non-empty."
+        )
+        user_prompt = self._build_user_prompt(context, extra_instruction=extra)
+        logger.info(f"Prompting impact_analyst (context_len={len(user_prompt)})")
+        response = self.llm.generate(system_prompt, user_prompt, schema=ImpactReport)
+        response["agent_role"] = "impact_analyst"
         return response
 
     def prompt_rebuttal(self, agent_type: str, context: dict, opposing_argument: dict) -> dict:

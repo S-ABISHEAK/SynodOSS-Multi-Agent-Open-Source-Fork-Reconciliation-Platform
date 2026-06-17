@@ -18,7 +18,8 @@ class ConflictContextBuilder:
     def build_context(self, unit: ReconciliationUnit) -> dict:
         """
         Builds a rich, grounded context dict for the agents.
-        Includes: full file contents, git commit messages, and AST-level change summary.
+        Includes: full file contents, git commit messages, AST-level change summary,
+        and graph-aware impact analysis (Stage 2 additions from graph_02.md).
         """
         scan_id = unit.scan_id
         file_path = unit.file_path  # e.g. "apps/backend/routes/ingest.py"
@@ -38,7 +39,7 @@ class ConflictContextBuilder:
         # Provide the full diff (not truncated to 1000 chars like before)
         diff_preview = unit.diff_hunk or "(no diff available)"
 
-        return {
+        context = {
             "file_path": file_path,
             "complexity_score": unit.complexity_score,
             "diff_preview": diff_preview,
@@ -47,7 +48,17 @@ class ConflictContextBuilder:
             "upstream_commit_messages": upstream_commit_messages,
             "fork_commit_messages": fork_commit_messages,
             "ast_summary": ast_summary,
+            # ── Graph-Aware Impact Context (graph_02.md Stage 2) ──────────
+            "changed_symbol": unit.symbol or "Unknown",
+            "impact_score": unit.impact_score or 0.0,
+            "affected_functions": unit.affected_functions or [],
+            "affected_modules": unit.affected_modules or [],
+            "critical_paths": unit.critical_paths or [],
+            "dependency_depth": unit.dependency_depth or 0,
+            "architectural_layer": unit.architectural_layer or "Unknown",
         }
+        return context
+
 
     # ──────────────────────────────────────────────────────────
     # File Reading

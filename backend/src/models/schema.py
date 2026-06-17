@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Enum, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Enum, JSON, Text, Boolean
 import enum
 from src.models.base import Base
 
@@ -40,12 +40,28 @@ class RoundType(str, enum.Enum):
     review = "review"
 
 class ArchitecturalProposalType(str, enum.Enum):
+    MERGE_FULL = "MERGE_FULL"
+    MERGE_PARTIAL = "MERGE_PARTIAL"
     ADAPTER_PATTERN = "ADAPTER_PATTERN"
     FACADE_PATTERN = "FACADE_PATTERN"
     COMPATIBILITY_LAYER = "COMPATIBILITY_LAYER"
     MIGRATION_LAYER = "MIGRATION_LAYER"
     WRAPPER_STRATEGY = "WRAPPER_STRATEGY"
     MANUAL_ESCALATION = "MANUAL_ESCALATION"
+    ESCALATE_TO_HUMAN = "ESCALATE_TO_HUMAN"
+
+class NodeType(str, enum.Enum):
+    MODULE = "MODULE"
+    CLASS = "CLASS"
+    FUNCTION = "FUNCTION"
+    INTERFACE = "INTERFACE"
+
+class EdgeType(str, enum.Enum):
+    IMPORTS = "IMPORTS"
+    CALLS = "CALLS"
+    INHERITS = "INHERITS"
+    IMPLEMENTS = "IMPLEMENTS"
+    USES = "USES"
 
 class Repository(Base):
     __tablename__ = "repositories"
@@ -111,8 +127,15 @@ class ReconciliationUnit(Base):
     file_path = Column(String)
     diff_hunk = Column(String)
     module = Column(String, nullable=True)
-    symbol = Column(String, nullable=True)
-    symbol_type = Column(String, nullable=True)
+    # Graph-aware symbol fields
+    symbol = Column(String, nullable=True)          # changed_symbol
+    symbol_type = Column(String, nullable=True)     # MODULE | CLASS | FUNCTION | INTERFACE
+    affected_functions = Column(JSON, nullable=True) # list of function names in blast radius
+    affected_modules = Column(JSON, nullable=True)   # list of module names impacted
+    critical_paths = Column(JSON, nullable=True)     # list of critical dependency paths
+    impact_score = Column(Float, nullable=True)      # 0–100, derived by ImpactAnalyzer
+    dependency_depth = Column(Integer, nullable=True) # max traversal depth of impact
+    # Legacy / kept for backwards compat
     impact_radius = Column(Integer, nullable=True)
     callers = Column(JSON, nullable=True)
     dependencies = Column(JSON, nullable=True)
@@ -186,4 +209,41 @@ class DecisionRecord(Base):
     architect_decision = Column(String)
     evidence = Column(JSON)
     verification_result = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Graph Intelligence Layer (graph_01.md — Stage 1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class GraphNode(Base):
+    """Represents a code symbol (module, class, function, interface) in the dependency graph."""
+    __tablename__ = "graph_nodes"
+    id = Column(Integer, primary_key=True, index=True)
+    repository_id = Column(Integer, ForeignKey("repositories.id"), index=True)
+    node_name = Column(String, index=True)           # e.g. "decode_token"
+    node_type = Column(Enum(NodeType))               # MODULE | CLASS | FUNCTION | INTERFACE
+    file_path = Column(String)                       # e.g. "src/auth/jwt.py"
+    node_metadata = Column(JSON, nullable=True)      # lineno, args, docstring, etc.
+
+
+class GraphEdge(Base):
+    """Represents a dependency relationship between two graph nodes."""
+    __tablename__ = "graph_edges"
+    id = Column(Integer, primary_key=True, index=True)
+    source_node_id = Column(Integer, ForeignKey("graph_nodes.id"), index=True)
+    target_node_id = Column(Integer, ForeignKey("graph_nodes.id"), index=True)
+    edge_type = Column(Enum(EdgeType))               # IMPORTS | CALLS | INHERITS | IMPLEMENTS | USES
+
+
+class ImpactAnalysis(Base):
+    """Stores the computed impact analysis result for a reconciliation unit."""
+    __tablename__ = "impact_analysis"
+    id = Column(Integer, primary_key=True, index=True)
+    reconciliation_unit_id = Column(Integer, ForeignKey("reconciliation_units.id"), unique=True)
+    affected_functions = Column(JSON)                # list of function names
+    affected_modules = Column(JSON)                  # list of module names
+    dependency_depth = Column(Integer)               # BFS depth reached
+    critical_paths = Column(JSON)                    # list of path lists
+    impact_score = Column(Float)                     # 0.0 – 100.0
     created_at = Column(DateTime, default=datetime.utcnow)

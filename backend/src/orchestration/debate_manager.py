@@ -58,6 +58,13 @@ class DebateManager:
         logger.info(f"[debate={debate.id}] AST summary: {ast_summary.get('summary', 'none')}")
 
         try:
+            # ── Round 0: Impact Analyst (non-voting, pre-debate) ─────────
+            logger.info(f"[debate={debate.id}] Round 0: Impact Analyst pre-debate report")
+            impact_report = self.agent_manager.prompt_impact_analyst(context)
+            self._save_msg(db, debate.id, 0, "impact_analyst", impact_report)
+            # Inject impact report into context so all agents can reference it
+            context["impact_report"] = impact_report
+
             # ── Round 1: Independent Analysis ──────────────────────────
             logger.info(f"[debate={debate.id}] Round 1: Independent analysis")
             adv_res = self.agent_manager.prompt_agent("advocate", context)
@@ -81,30 +88,18 @@ class DebateManager:
             self._save_msg(db, debate.id, 3, "architect", arch_res)
             full_history.append(arch_res)
 
-            # ── Round 4: Verification Judge ─────────────────────────────
+            # ── Round 4: Verification Judge ────────────────────────────
             logger.info(f"[debate={debate.id}] Round 4: Verification judge (running EvidenceResolver)")
             from src.services.evidence_resolver import EvidenceResolver
             resolver = EvidenceResolver(self.context_builder.base_dir)
-            fork_path = self.context_builder._get_repo_path(debate.conflict_id, "fork") # approximate scan_id with conflict_id for now, or use context
-            
-            validation_report = []
-            for msg in full_history:
-                role = msg.get("agent_role", "unknown")
-                evs = msg.get("evidence_provided", [])
-                for ev in evs:
-                    if isinstance(ev, dict):
-                        line_start = ev.get("line_start")
-                        line_end = ev.get("line_end")
-                        res = resolver.validate_evidence(
-                            fork_path, 
-                            unit.file_path, 
-                            line_start=line_start, 
-                            line_end=line_end
-                        )
-                        status = "VALID" if res["is_valid"] else f"INVALID ({', '.join(res['errors'])})"
-                        validation_report.append(f"[{role}] Claim: {ev.get('description')} -> {status}")
+            fork_path = self.context_builder._get_repo_path(debate.conflict_id, "fork")
 
-            context["validation_report"] = "\n".join(validation_report)
+            validation_lines = resolver.build_validation_report(
+                history=full_history,
+                repo_path=fork_path,
+                file_path=unit.file_path,
+            )
+            context["validation_report"] = "\n".join(validation_lines)
             judge_res = self.agent_manager.prompt_agent("judge", context, full_history)
             self._save_msg(db, debate.id, 4, "judge", judge_res)
 

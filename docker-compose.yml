@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-synodoss_pass}
       POSTGRES_DB: ${POSTGRES_DB:-synodoss}
     ports:
-      - "5432:5432"
+      - "5433:5433"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -34,7 +34,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-synodoss}:${POSTGRES_PASSWORD:-synodoss_pass}@postgres:5432/${POSTGRES_DB:-synodoss}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-synodoss}:${POSTGRES_PASSWORD:-synodoss_pass}@postgres:5433/${POSTGRES_DB:-synodoss}
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       postgres:
@@ -51,7 +51,7 @@ services:
       - ./backend:/app
       - repos_data:/data/repos
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-synodoss}:${POSTGRES_PASSWORD:-synodoss_pass}@postgres:5432/${POSTGRES_DB:-synodoss}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-synodoss}:${POSTGRES_PASSWORD:-synodoss_pass}@postgres:5433/${POSTGRES_DB:-synodoss}
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       postgres:
