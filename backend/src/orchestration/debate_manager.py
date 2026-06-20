@@ -1,15 +1,18 @@
 from src.core.database import SessionLocal
-from src.models.schema import Debate, DebateMessage, ReconciliationUnit, DebateStatus
+from src.models.schema import Debate, DebateMessage, ReconciliationUnit, DebateStatus, DebateState
 from src.orchestration.agent_manager import AgentManager
-from src.orchestration.context_builder import ConflictContextBuilder
+from src.orchestration.context_builder import ConflictContextBuilder, REPOS_BASE
 from src.orchestration.consensus_manager import ConsensusManager
 import json
+import time
 import logging
 import traceback
 
 logger = logging.getLogger(__name__)
 
 CONFIDENCE_ESCALATION_THRESHOLD = 0.65
+# Seconds to wait between LLM rounds to reduce Groq 429s
+INTER_ROUND_DELAY = 2
 
 
 class DebateManager:
@@ -58,49 +61,106 @@ class DebateManager:
         logger.info(f"[debate={debate.id}] AST summary: {ast_summary.get('summary', 'none')}")
 
         try:
+            # Initialize Debate State Machine — UPSERT pattern to survive restarts
+            debate_state = db.query(DebateState).filter(DebateState.debate_id == debate.id).first()
+            if debate_state is None:
+                debate_state = DebateState(
+                    debate_id=debate.id,
+                    current_round=0,
+                    current_position="Pending analysis",
+                    opponent_claims={},
+                    evidence_delta=[],
+                )
+                db.add(debate_state)
+                db.commit()
+            else:
+                # Reset existing state for a fresh run
+                debate_state.current_round = 0
+                debate_state.current_position = "Pending analysis"
+                debate_state.opponent_claims = {}
+                debate_state.evidence_delta = []
+                db.commit()
+
             # ── Round 0: Impact Analyst (non-voting, pre-debate) ─────────
             logger.info(f"[debate={debate.id}] Round 0: Impact Analyst pre-debate report")
             impact_report = self.agent_manager.prompt_impact_analyst(context)
             self._save_msg(db, debate.id, 0, "impact_analyst", impact_report)
-            # Inject impact report into context so all agents can reference it
             context["impact_report"] = impact_report
+            time.sleep(INTER_ROUND_DELAY)
 
             # ── Round 1: Independent Analysis ──────────────────────────
+            debate_state.current_round = 1
+            db.commit()
             logger.info(f"[debate={debate.id}] Round 1: Independent analysis")
             adv_res = self.agent_manager.prompt_agent("advocate", context)
+            time.sleep(INTER_ROUND_DELAY)
             def_res = self.agent_manager.prompt_agent("defender", context)
             self._save_msg(db, debate.id, 1, "advocate", adv_res)
             self._save_msg(db, debate.id, 1, "defender", def_res)
 
+            # Update state with Round 1 claims
+            debate_state.current_position = "Round 1 Complete"
+            debate_state.opponent_claims = {
+                "advocate_claims": adv_res.get("analysis", ""),
+                "defender_claims": def_res.get("analysis", "")
+            }
+            db.commit()
+            time.sleep(INTER_ROUND_DELAY)
+
             # ── Round 2: Cross-Examination ──────────────────────────────
+            debate_state.current_round = 2
+            db.commit()
             logger.info(f"[debate={debate.id}] Round 2: Cross-examination rebuttals")
-            adv_rebuttal = self.agent_manager.prompt_rebuttal("advocate", context, def_res)
-            def_rebuttal = self.agent_manager.prompt_rebuttal("defender", context, adv_res)
+            # Pass only current_position & opponent_claims (not full history) to avoid token bloat
+            adv_rebuttal = self.agent_manager.prompt_rebuttal(
+                "advocate", context, debate_state.opponent_claims.get("defender_claims", "")
+            )
+            time.sleep(INTER_ROUND_DELAY)
+            def_rebuttal = self.agent_manager.prompt_rebuttal(
+                "defender", context, debate_state.opponent_claims.get("advocate_claims", "")
+            )
             self._save_msg(db, debate.id, 2, "advocate_rebuttal", adv_rebuttal)
             self._save_msg(db, debate.id, 2, "defender_rebuttal", def_rebuttal)
 
-            # Full history for Architect
-            full_history = [adv_res, def_res, adv_rebuttal, def_rebuttal]
+            # Build a fresh dict so SQLAlchemy detects the mutation
+            updated_claims = dict(debate_state.opponent_claims)
+            updated_claims["advocate_rebuttal"] = adv_rebuttal.get("rebuttal", "")
+            updated_claims["defender_rebuttal"] = def_rebuttal.get("rebuttal", "")
+            debate_state.opponent_claims = updated_claims
+            debate_state.current_position = "Round 2 Complete"
+            db.commit()
+            time.sleep(INTER_ROUND_DELAY)
 
             # ── Round 3: Architect Synthesis ────────────────────────────
+            debate_state.current_round = 3
+            db.commit()
             logger.info(f"[debate={debate.id}] Round 3: Architect synthesis")
-            arch_res = self.agent_manager.prompt_agent("architect", context, full_history)
+            state_history = [
+                {"current_position": debate_state.current_position, "opponent_claims": debate_state.opponent_claims}
+            ]
+            arch_res = self.agent_manager.prompt_agent("architect", context, state_history)
             self._save_msg(db, debate.id, 3, "architect", arch_res)
-            full_history.append(arch_res)
+            time.sleep(INTER_ROUND_DELAY)
 
             # ── Round 4: Verification Judge ────────────────────────────
+            debate_state.current_round = 4
+            db.commit()
             logger.info(f"[debate={debate.id}] Round 4: Verification judge (running EvidenceResolver)")
             from src.services.evidence_resolver import EvidenceResolver
-            resolver = EvidenceResolver(self.context_builder.base_dir)
-            fork_path = self.context_builder._get_repo_path(debate.conflict_id, "fork")
+            resolver = EvidenceResolver(str(REPOS_BASE))
+            fork_path = str(REPOS_BASE / str(unit.scan_id) / "fork")
 
+            full_history = [adv_res, def_res, adv_rebuttal, def_rebuttal, arch_res]
             validation_lines = resolver.build_validation_report(
                 history=full_history,
                 repo_path=fork_path,
                 file_path=unit.file_path,
             )
             context["validation_report"] = "\n".join(validation_lines)
-            judge_res = self.agent_manager.prompt_agent("judge", context, full_history)
+            
+            # Pass only the claims for judging, preventing full raw token bloat
+            judge_state = [{"claims_to_verify": debate_state.opponent_claims, "architect_resolution": arch_res.get("reason") or arch_res.get("rationale")}]
+            judge_res = self.agent_manager.prompt_agent("judge", context, judge_state)
             self._save_msg(db, debate.id, 4, "judge", judge_res)
 
             # ── Consensus ───────────────────────────────────────────────
@@ -130,8 +190,12 @@ class DebateManager:
         except Exception as e:
             logger.error(f"[debate={debate.id}] Debate loop failed: {e}")
             traceback.print_exc()
-            debate.status = DebateStatus.failed
-            db.commit()
+            try:
+                db.rollback()
+                debate.status = DebateStatus.failed
+                db.commit()
+            except Exception as commit_err:
+                logger.error(f"[debate={debate.id}] Could not persist failed status: {commit_err}")
 
     # Keep old name as alias for backwards compat with routes.py
     def _run_4_round_loop(self, db, debate: Debate, unit: ReconciliationUnit):

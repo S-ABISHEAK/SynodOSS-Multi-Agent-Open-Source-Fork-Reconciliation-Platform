@@ -17,25 +17,33 @@ class ResolutionAction(str, Enum):
 # Evidence Model — now requires line citations
 # ──────────────────────────────────────────────
 class Evidence(BaseModel):
-    source: str = Field(
+    file: str = Field(
         ...,
-        description="Where the evidence comes from: 'upstream_file', 'fork_file', 'diff_hunk', 'upstream_commits', 'fork_commits', 'ast_summary'"
+        description="The filename where the evidence is located."
     )
-    description: str = Field(
-        ...,
-        description="What the evidence shows. Reference specific function/class names from ast_summary."
+    symbol: Optional[str] = Field(
+        None,
+        description="The specific function or class name this evidence pertains to."
     )
     line_start: Optional[int] = Field(
         None,
-        description="Starting line number in the diff_preview that supports this claim. Required if source is 'diff_hunk'."
+        description="Starting line number."
     )
     line_end: Optional[int] = Field(
         None,
-        description="Ending line number in the diff_preview that supports this claim. Required if source is 'diff_hunk'."
+        description="Ending line number."
     )
-    strength: float = Field(
+    commit: Optional[str] = Field(
+        None,
+        description="The commit hash if referring to a specific git commit."
+    )
+    verified: bool = Field(
+        False,
+        description="Must be True if verified. Unverified evidence will be automatically rejected."
+    )
+    description: str = Field(
         ...,
-        description="Confidence in this evidence from 0.0 (speculation) to 1.0 (directly verifiable in the provided code)"
+        description="What the evidence shows."
     )
 
 
@@ -67,32 +75,33 @@ class AgentResponseSchema(BaseModel):
 # ──────────────────────────────────────────────
 class ArchitectResolutionSchema(BaseModel):
     agent_role: str = "Architect Reviewer"
-    resolution_action: Literal[
-        "MERGE_FULL",
-        "MERGE_PARTIAL",
+    decision: Literal[
         "ADAPTER_PATTERN", 
-        "FACADE_PATTERN", 
         "COMPATIBILITY_LAYER", 
+        "FACADE_PATTERN", 
         "MIGRATION_LAYER", 
         "WRAPPER_STRATEGY", 
-        "MANUAL_ESCALATION",
-        "ESCALATE_TO_HUMAN",
+        "HUMAN_ESCALATION",
     ] = Field(description="Strict enum representing the structural architecture decision.")
-    rationale: str = Field(
+    reason: str = Field(
         ...,
-        description="Why you chose this action. Must reference specific symbols from ast_summary and arguments from the debate."
+        description="Why you chose this decision. Must reference specific symbols and arguments from the debate."
+    )
+    migration_cost: Literal["LOW", "MEDIUM", "HIGH"] = Field(
+        ...,
+        description="Estimated migration cost/effort."
+    )
+    affected_modules: int = Field(
+        ...,
+        description="Number of modules affected by this architectural decision."
     )
     implementation_steps: List[str] = Field(
         default_factory=list,
-        description="Concrete, ordered steps to execute the resolution. Reference function names and line numbers."
+        description="Concrete, ordered steps to execute the resolution."
     )
     evidence_provided: List[Evidence] = Field(
         default_factory=list,
         description="Evidence grounding your architectural decision."
-    )
-    confidence: float = Field(
-        ...,
-        description="How confident you are in this architectural decision (0.0 to 1.0)"
     )
 
 
@@ -202,5 +211,6 @@ RULES:
 1. Ground ALL evidence in the provided context. Reference specific function names, class names, or line numbers.
 2. DO NOT invent variable names, function signatures, or commit messages that are not in the context.
 3. If the context is insufficient to form a grounded claim, say so explicitly rather than speculating.
-4. When citing diff_hunk evidence, provide line_start and line_end from the diff_preview.
+4. When citing evidence, you MUST mark it as verified ONLY if you are absolutely certain it is in the context. UNVERIFIED evidence will be rejected by the Judge.
+5. NEVER cite unverified evidence. Hallucinations will be penalized heavily.
 """

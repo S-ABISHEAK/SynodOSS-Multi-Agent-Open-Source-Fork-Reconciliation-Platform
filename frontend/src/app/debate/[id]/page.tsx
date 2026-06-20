@@ -23,13 +23,41 @@ const RESOLUTION_STYLES: Record<string, { bg: string; text: string; border: stri
   ESCALATE_HUMAN:    { bg: 'bg-red-500/20',     text: 'text-red-500',     border: 'border-red-500/50',     icon: '⚠' },
 };
 
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'escalated']);
+
 export default function DebateWorkspace() {
   const params = useParams();
   const debateId = Number(params.id);
 
   const [debate, setDebate] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const failCountRef = useRef(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const transcriptContainerRef = useRef<HTMLDivElement>(null);
+  const [userScrolled, setUserScrolled] = useState(false);
+
+  const isNearBottom = () => {
+    const el = transcriptContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+  };
+
+  const handleScroll = () => setUserScrolled(!isNearBottom());
+
+  const jumpToLatest = () => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setUserScrolled(false);
+  };
+
+  const stopPolling = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
 
   const fetchDebate = async () => {
     if (!debateId) return;
@@ -38,29 +66,85 @@ export default function DebateWorkspace() {
         axios.get(`${API_URL}/debates/${debateId}`),
         axios.get(`${API_URL}/debates/${debateId}/rounds`),
       ]);
-      setDebate(dRes.data);
+      const data = dRes.data;
+      setDebate(data);
       setMessages(mRes.data ?? []);
-    } catch (e) {
-      console.error(e);
+      setFetchError(null);
+      failCountRef.current = 0;
+      setIsInitialLoad(false);
+      // Stop polling once debate is in a terminal state
+      if (data?.status && TERMINAL_STATUSES.has(data.status)) {
+        stopPolling();
+      }
+    } catch (e: any) {
+      failCountRef.current += 1;
+      console.error('Debate fetch error:', e);
+      if (failCountRef.current >= 3) {
+        setFetchError(
+          e?.response?.status === 404
+            ? `Debate #${debateId} not found. It may have been deleted.`
+            : `Unable to reach the backend. Is uvicorn running on port 8000?`
+        );
+        stopPolling();
+        setIsInitialLoad(false);
+      }
     }
   };
 
   useEffect(() => {
+    if (!debateId) return;
     fetchDebate();
-    const interval = setInterval(fetchDebate, 3000);
-    return () => clearInterval(interval);
+    intervalRef.current = setInterval(fetchDebate, 3000);
+    return () => stopPolling();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debateId]);
 
+  // Auto-scroll when new messages arrive (unless user scrolled up)
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!userScrolled) {
+      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
-  if (!debate) {
+  // ── Loading / Error Gate ────────────────────────────────────────────
+  if (isInitialLoad && !debate && !fetchError) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-indigo-400 font-mono animate-pulse">Initializing Council Workspace...</p>
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+        <div className="flex flex-col items-center gap-6 p-8">
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-indigo-500/20 rounded-full" />
+            <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin absolute inset-0" />
+          </div>
+          <div className="text-center">
+            <p className="text-indigo-400 font-mono font-bold animate-pulse">Initializing Council Workspace...</p>
+            <p className="text-neutral-600 text-xs mt-2 font-mono">Debate #{debateId} · Connecting to API</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center p-8">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-16 h-16 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center justify-center mx-auto text-3xl">⚠</div>
+          <div>
+            <h2 className="text-xl font-black text-red-400 mb-2">Council Unreachable</h2>
+            <p className="text-neutral-400 text-sm leading-relaxed">{fetchError}</p>
+          </div>
+          <button
+            onClick={() => {
+              setFetchError(null);
+              setIsInitialLoad(true);
+              failCountRef.current = 0;
+              intervalRef.current = setInterval(fetchDebate, 3000);
+              fetchDebate();
+            }}
+            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-colors text-sm"
+          >
+            Retry Connection
+          </button>
         </div>
       </div>
     );
@@ -192,7 +276,23 @@ export default function DebateWorkspace() {
             </span>
           </div>
 
-          <div className="p-6 space-y-6 max-h-[800px] overflow-y-auto">
+          <div
+            ref={transcriptContainerRef}
+            onScroll={handleScroll}
+            className="relative p-6 space-y-6 max-h-[800px] overflow-y-auto scroll-smooth"
+          >
+            {/* Jump to latest button — shown when user has scrolled up */}
+            {userScrolled && (
+              <div className="sticky top-2 z-10 flex justify-center pointer-events-none">
+                <button
+                  onClick={jumpToLatest}
+                  className="pointer-events-auto flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-900/40 transition-all animate-bounce"
+                >
+                  <span>Jump to Latest</span>
+                  <span>↓</span>
+                </button>
+              </div>
+            )}
             {messages.length === 0 ? (
               <div className="text-center text-neutral-500 font-mono py-16 flex flex-col items-center gap-4">
                 <div className="w-8 h-8 border-2 border-neutral-700 border-t-neutral-400 rounded-full animate-spin" />

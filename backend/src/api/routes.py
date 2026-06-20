@@ -116,14 +116,34 @@ def start_debate(unit_id: int, background_tasks: BackgroundTasks, db: Session = 
     db.commit()
     db.refresh(debate)
     
-    def run_debate_task(u_id, d_id):
-        # Run loop in background
+    def run_debate_task(u_id: int, d_id: int):
+        """Run the debate in a background thread with its own DB session."""
+        import logging as _logging
+        from src.models.schema import DebateStatus as _DS
+        _log = _logging.getLogger("routes.debate_bg")
         manager = DebateManager()
         local_db = SessionLocal()
         try:
-            d = local_db.query(Debate).get(d_id)
-            u = local_db.query(ReconciliationUnit).get(u_id)
+            d = local_db.query(Debate).filter(Debate.id == d_id).first()
+            u = local_db.query(ReconciliationUnit).filter(ReconciliationUnit.id == u_id).first()
+            if not d or not u:
+                _log.error(f"run_debate_task: debate {d_id} or unit {u_id} not found in DB")
+                return
+            _log.info(f"run_debate_task: starting debate={d_id} for unit={u_id}")
             manager._run_4_round_loop(local_db, d, u)
+            _log.info(f"run_debate_task: finished debate={d_id} status={d.status}")
+        except Exception as exc:
+            import traceback as _tb
+            _log.error(f"run_debate_task: unhandled exception for debate={d_id}: {exc}")
+            _tb.print_exc()
+            try:
+                local_db.rollback()
+                d2 = local_db.query(Debate).filter(Debate.id == d_id).first()
+                if d2:
+                    d2.status = _DS.failed
+                    local_db.commit()
+            except Exception:
+                pass
         finally:
             local_db.close()
             
@@ -136,20 +156,56 @@ def get_debate(id: int, db: Session = Depends(get_db)):
     debate = db.query(Debate).filter(Debate.id == id).first()
     if not debate:
         raise HTTPException(status_code=404, detail="Debate not found")
-        
+
     unit = db.query(ReconciliationUnit).filter(ReconciliationUnit.id == debate.conflict_id).first()
-    
-    # We return the debate dict plus context
+
+    # Serialize all debate columns
     result = {c.name: getattr(debate, c.name) for c in debate.__table__.columns}
-    result["file_path"] = unit.file_path if unit else "Unknown"
-    result["diff_hunk"] = unit.diff_hunk if unit else ""
-    
+
+    # Attach file context from the unit
+    if unit:
+        result["file_path"] = unit.file_path
+        result["diff_hunk"] = unit.diff_hunk
+        # Graph / impact fields needed by ConflictImpactCard
+        result["symbol"] = unit.symbol
+        result["symbol_type"] = unit.symbol_type
+        result["impact_score"] = unit.impact_score
+        result["dependency_depth"] = unit.dependency_depth
+        result["affected_functions"] = unit.affected_functions or []
+        result["affected_modules"] = unit.affected_modules or []
+        result["critical_paths"] = unit.critical_paths or []
+        result["architectural_layer"] = unit.architectural_layer
+    else:
+        result["file_path"] = "Unknown"
+        result["diff_hunk"] = ""
+
+    # Ensure enum fields are serialized as strings
+    if result.get("status") and hasattr(result["status"], "value"):
+        result["status"] = result["status"].value
+
     return result
 
 @router.get("/debates/{id}/rounds")
 def get_debate_rounds(id: int, db: Session = Depends(get_db)):
-    messages = db.query(DebateMessage).filter(DebateMessage.debate_id == id).order_by(DebateMessage.round, DebateMessage.timestamp).all()
-    return messages
+    messages = (
+        db.query(DebateMessage)
+        .filter(DebateMessage.debate_id == id)
+        .order_by(DebateMessage.round, DebateMessage.timestamp)
+        .all()
+    )
+    # Explicitly serialize to avoid SQLAlchemy ORM object issues
+    return [
+        {
+            "id": m.id,
+            "debate_id": m.debate_id,
+            "round": m.round,
+            "agent": m.agent,
+            "message": m.message,
+            "evidence_refs": m.evidence_refs or [],
+            "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+        }
+        for m in messages
+    ]
 
 @router.get("/debates/{id}/consensus")
 def get_debate_consensus(id: int, db: Session = Depends(get_db)):

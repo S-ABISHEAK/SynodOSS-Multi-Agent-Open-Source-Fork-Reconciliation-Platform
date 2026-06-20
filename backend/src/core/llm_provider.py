@@ -29,28 +29,45 @@ class LLMProvider:
             print("WARNING: GROQ_API_KEY is not set. Using structured mock LLM response.")
             return self._mock_response(schema)
             
-        try:
-            response = self.client.chat.completions.create(
-                messages=messages,
-                model=self.model,
-                temperature=0.2,
-                max_tokens=settings.MAX_TOKENS_PER_AGENT,
-                response_format={"type": "json_object"} if schema else None
-            )
-            
-            content = response.choices[0].message.content
-            if schema:
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError:
-                    print("Failed to parse JSON from LLM response")
-                    return self._mock_response(schema)
-            return {"content": content}
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"LLM Generation Error: {e}")
-            return self._mock_response(schema) if schema else {"error": str(e)}
+        import time
+        max_retries = 5
+        base_delay = 2
+
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    messages=messages,
+                    model=self.model,
+                    temperature=0.2,
+                    max_tokens=settings.MAX_TOKENS_PER_AGENT,
+                    response_format={"type": "json_object"} if schema else None
+                )
+                
+                content = response.choices[0].message.content
+                if schema:
+                    try:
+                        return json.loads(content)
+                    except json.JSONDecodeError as e:
+                        print(f"Failed to parse JSON from LLM response: {content}")
+                        if attempt == max_retries - 1:
+                            raise ValueError(f"LLM returned invalid JSON: {content}") from e
+                        continue # Retry on bad JSON
+                return {"content": content}
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                if "429" in error_str or "rate limit" in error_str:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Rate limit hit. Retrying in {delay} seconds (Attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(delay)
+                    if attempt == max_retries - 1:
+                        print("Exhausted all retries for rate limits.")
+                        raise e
+                else:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"LLM Generation Error: {e}")
+                    raise e
 
     def _mock_response(self, schema) -> dict:
         """Generate a structured mock response that exactly matches the Pydantic schemas."""
@@ -141,6 +158,10 @@ class LLMProvider:
                 ],
                 "verified_evidence_count": 3,
                 "adjusted_confidence_penalty": 0.08,
+                "evidence_validity_score": 0.75,
+                "graph_consistency_score": 0.90,
+                "agent_agreement_score": 0.50,
+                "trust_score": 0.88,
             }
 
         # Generic fallback for unknown schemas

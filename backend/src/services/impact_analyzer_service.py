@@ -203,15 +203,7 @@ class ImpactAnalyzerService:
             sum(1 for _, d in graph.nodes(data=True) if d.get("node_type") in ("MODULE", "CLASS")),
             1,
         )
-        max_depth = max(
-            max((len(p) - 1 for p in nx.all_simple_paths(graph, source=n, target=t)
-                 for n in graph.nodes for t in graph.nodes
-                 if n != t and nx.has_path(graph, n, t)),
-                default=1),
-            1,
-        ) if graph.number_of_edges() > 0 else 1
-
-        # Simpler depth max: diameter if graph is connected, else longest BFS depth
+        # Simpler depth max: longest path if DAG, else longest BFS depth
         try:
             max_depth = nx.dag_longest_path_length(graph) or 1
         except Exception:

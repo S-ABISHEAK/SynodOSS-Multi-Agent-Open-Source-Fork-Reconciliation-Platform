@@ -9,7 +9,7 @@ from src.models.schema import ReconciliationUnit
 logger = logging.getLogger(__name__)
 
 # Max characters to inject per file (keeps within ~6k tokens)
-MAX_FILE_CHARS = 8000
+MAX_FILE_CHARS = 1500
 # Base path where repos are cloned
 REPOS_BASE = Path(__file__).parent.parent.parent / "data" / "repos"
 
@@ -38,16 +38,21 @@ class ConflictContextBuilder:
 
         # Provide the full diff (not truncated to 1000 chars like before)
         diff_preview = unit.diff_hunk or "(no diff available)"
+        
+        # Problem 1 & 4: Context Compression Layer
+        from src.services.context_compression_service import ContextCompressionService
+        compressor = ContextCompressionService()
+        compressed_context = compressor.compress(unit)
 
         context = {
             "file_path": file_path,
             "complexity_score": unit.complexity_score,
             "diff_preview": diff_preview,
-            "upstream_file_content": upstream_content or "(file not found in upstream)",
-            "fork_file_content": fork_content or "(file not found in fork — may have been deleted)",
+            # Omitting full file contents to prevent raw context bloat
             "upstream_commit_messages": upstream_commit_messages,
             "fork_commit_messages": fork_commit_messages,
             "ast_summary": ast_summary,
+            "compressed_context": compressed_context,
             # ── Graph-Aware Impact Context (graph_02.md Stage 2) ──────────
             "changed_symbol": unit.symbol or "Unknown",
             "impact_score": unit.impact_score or 0.0,

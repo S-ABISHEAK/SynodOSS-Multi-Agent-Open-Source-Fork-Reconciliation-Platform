@@ -4,7 +4,9 @@ from src.services.repository_service import RepositoryService
 from src.services.diff_analysis_service import DiffAnalysisService
 from src.services.conflict_detection_service import ConflictDetectionService
 from src.services.persistence_service import PersistenceService
-from src.models.schema import ScanStatus
+from src.models.schema import ScanStatus, RepositoryScan
+from src.services.graph_builder_service import GraphBuilderService
+from src.services.impact_analyzer_service import ImpactAnalyzerService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,13 @@ def run_repository_scan(self, scan_id: int, upstream_url: str, fork_url: str):
         logger.info(f"Scan {scan_id}: Cloning fork {fork_url}")
         fork_path = repo_service.clone_repository(fork_url, scan_id, "fork")
         
+        # Step 2.5: Build Fork Graph (Stage 3 Graph Intelligence)
+        scan = db.query(RepositoryScan).filter(RepositoryScan.id == scan_id).first()
+        graph_builder = GraphBuilderService(db)
+        logger.info(f"Scan {scan_id}: Building AST dependency graph for fork (repo_id={scan.fork_repo_id})")
+        fork_graph = graph_builder.build_graph(scan.fork_repo_id, fork_path)
+        impact_analyzer = ImpactAnalyzerService(db)
+        
         # Calculate Divergence
         logger.info(f"Scan {scan_id}: Calculating divergence metrics")
         metrics = diff_service.calculate_divergence(scan_id)
@@ -51,6 +60,18 @@ def run_repository_scan(self, scan_id: int, upstream_url: str, fork_url: str):
             
             ru["severity_score"] = sev_score
             ru["complexity_score"] = comp_score
+
+            # Run Graph Impact Analysis if symbol is known
+            symbol = ru.get("symbol", "Unknown")
+            if symbol and symbol != "Unknown":
+                logger.info(f"Scan {scan_id}: Analyzing graph impact for symbol '{symbol}'")
+                impact_res = impact_analyzer.analyze(fork_graph, symbol, scan.fork_repo_id)
+                ru["affected_functions"] = impact_res.get("affected_functions", [])
+                ru["affected_modules"] = impact_res.get("affected_modules", [])
+                ru["dependency_depth"] = impact_res.get("dependency_depth", 0)
+                ru["critical_paths"] = impact_res.get("critical_paths", [])
+                ru["impact_score"] = impact_res.get("impact_score", 0.0)
+
             processed_units.append(ru)
             
         persistence.store_reconciliation_units(scan_id, processed_units)

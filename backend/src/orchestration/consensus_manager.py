@@ -36,11 +36,14 @@ class ConsensusManager:
                              verification_score, token_usage.
         """
         # Extract architect fields
-        resolution_action = arch_response.get("resolution_action")
-        rationale = arch_response.get("rationale", "")
+        resolution_action = arch_response.get("decision") or arch_response.get("resolution_action")
+        rationale = arch_response.get("reason") or arch_response.get("rationale", "")
         implementation_steps = arch_response.get("implementation_steps", [])
         arch_confidence = arch_response.get("confidence", 0.5)
         arch_evidence = arch_response.get("evidence_provided", [])
+        
+        migration_cost = arch_response.get("migration_cost", "UNKNOWN")
+        affected_modules = arch_response.get("affected_modules", 0)
 
         # Build human-readable proposal from resolution_action + rationale
         if resolution_action and rationale:
@@ -49,15 +52,20 @@ class ConsensusManager:
                 steps_text = "\n\nImplementation Steps:\n" + "\n".join(
                     f"  {i+1}. {step}" for i, step in enumerate(implementation_steps)
                 )
-            proposal = f"[{resolution_action}] {rationale}{steps_text}"
+            proposal = f"[{resolution_action}] (Cost: {migration_cost}, Modules: {affected_modules})\n{rationale}{steps_text}"
         else:
             # Fallback for old-format arch responses
             proposal = arch_response.get("proposed_action") or arch_response.get("analysis", "No consensus reached")
 
         # Extract judge fields
-        penalty = float(judge_verification.get("adjusted_confidence_penalty", 0.0))
+        trust_score = judge_verification.get("trust_score")
+        if trust_score is not None:
+            verification_score = round(float(trust_score), 4)
+        else:
+            penalty = float(judge_verification.get("adjusted_confidence_penalty", 0.0))
+            verification_score = round(max(0.0, 1.0 - penalty), 4)
+            
         verified_count = int(judge_verification.get("verified_evidence_count", 0))
-        verification_score = round(max(0.0, 1.0 - penalty), 4)
 
         # Calculate evidence strength from architect's evidence (avg of strengths)
         if arch_evidence:

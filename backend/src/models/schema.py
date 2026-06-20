@@ -40,15 +40,12 @@ class RoundType(str, enum.Enum):
     review = "review"
 
 class ArchitecturalProposalType(str, enum.Enum):
-    MERGE_FULL = "MERGE_FULL"
-    MERGE_PARTIAL = "MERGE_PARTIAL"
     ADAPTER_PATTERN = "ADAPTER_PATTERN"
-    FACADE_PATTERN = "FACADE_PATTERN"
     COMPATIBILITY_LAYER = "COMPATIBILITY_LAYER"
+    FACADE_PATTERN = "FACADE_PATTERN"
     MIGRATION_LAYER = "MIGRATION_LAYER"
     WRAPPER_STRATEGY = "WRAPPER_STRATEGY"
-    MANUAL_ESCALATION = "MANUAL_ESCALATION"
-    ESCALATE_TO_HUMAN = "ESCALATE_TO_HUMAN"
+    HUMAN_ESCALATION = "HUMAN_ESCALATION"
 
 class NodeType(str, enum.Enum):
     MODULE = "MODULE"
@@ -149,7 +146,7 @@ class ReconciliationUnit(Base):
 class Debate(Base):
     __tablename__ = "debates"
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"))
+    conflict_id = Column(Integer, ForeignKey("reconciliation_units.id"))
     status = Column(Enum(DebateStatus), default=DebateStatus.pending)
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
@@ -169,6 +166,16 @@ class DebateRound(Base):
     debate_id = Column(Integer, ForeignKey("debates.id"))
     round_number = Column(Integer)
     round_type = Column(Enum(RoundType))
+
+class DebateState(Base):
+    __tablename__ = "debate_state"
+    id = Column(Integer, primary_key=True, index=True)
+    debate_id = Column(Integer, ForeignKey("debates.id"), unique=True)
+    current_round = Column(Integer, default=0)
+    current_position = Column(String, nullable=True)
+    opponent_claims = Column(JSON, nullable=True)
+    evidence_delta = Column(JSON, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class AgentResponse(Base):
     __tablename__ = "agent_responses"

@@ -25,7 +25,7 @@ class AgentManager:
         self.judge = VerificationJudge()
         self.impact_analyst = ImpactAnalyst()
 
-    def _build_user_prompt(self, context: dict, previous_messages: list = None, extra_instruction: str = "") -> str:
+    def _build_user_prompt(self, context: dict, previous_messages: list = None, extra_instruction: str = "", agent_type: str = "") -> str:
         """Build a structured, readable user prompt from the rich context dict."""
         parts = []
 
@@ -48,40 +48,52 @@ class AgentManager:
             if modified:
                 parts.append(f"MODIFIED symbols: {', '.join(modified)}")
 
-        upstream_msgs = context.get("upstream_commit_messages", [])
-        if upstream_msgs:
-            parts.append(f"\n--- UPSTREAM COMMIT MESSAGES ---")
-            for msg in upstream_msgs:
-                parts.append(msg)
+        # Agent-Specific Context Filtering (Problem 7)
+        if agent_type in ["advocate", "impact_analyst"]:
+            upstream_msgs = context.get("upstream_commit_messages", [])
+            if upstream_msgs:
+                parts.append(f"\n--- UPSTREAM COMMIT MESSAGES ---")
+                for msg in upstream_msgs:
+                    parts.append(msg)
 
-        fork_msgs = context.get("fork_commit_messages", [])
-        if fork_msgs:
-            parts.append(f"\n--- FORK COMMIT MESSAGES ---")
-            for msg in fork_msgs:
-                parts.append(msg)
+        if agent_type in ["defender", "impact_analyst"]:
+            fork_msgs = context.get("fork_commit_messages", [])
+            if fork_msgs:
+                parts.append(f"\n--- FORK COMMIT MESSAGES ---")
+                for msg in fork_msgs:
+                    parts.append(msg)
 
-        parts.append(f"\n--- DIFF PREVIEW ---")
-        parts.append(context.get("diff_preview", "(no diff)"))
+        if agent_type not in ["architect"]:
+            parts.append(f"\n--- DIFF PREVIEW ---")
+            parts.append(context.get("diff_preview", "(no diff)"))
 
-        # ── Graph-Aware Impact Context (graph_02.md) ─────────────────────
-        impact_score = context.get("impact_score", 0.0)
-        affected_fns = context.get("affected_functions", [])
-        affected_mods = context.get("affected_modules", [])
-        critical_paths = context.get("critical_paths", [])
-        dep_depth = context.get("dependency_depth", 0)
-        changed_symbol = context.get("changed_symbol", "Unknown")
+        if agent_type in ["architect", "impact_analyst"]:
+            # Architect ONLY gets the highly compressed JSON impact graph
+            comp = context.get("compressed_context")
+            if comp:
+                parts.append(f"\n--- GRAPH IMPACT ANALYSIS (JSON) ---")
+                parts.append(json.dumps(comp, indent=2))
+        
+        # Legacy/Text graph fallback for others
+        elif agent_type not in ["judge"]:
+            impact_score = context.get("impact_score", 0.0)
+            affected_fns = context.get("affected_functions", [])
+            affected_mods = context.get("affected_modules", [])
+            critical_paths = context.get("critical_paths", [])
+            dep_depth = context.get("dependency_depth", 0)
+            changed_symbol = context.get("changed_symbol", "Unknown")
 
-        if impact_score > 0 or affected_fns or critical_paths:
-            parts.append(f"\n--- GRAPH IMPACT ANALYSIS ---")
-            parts.append(f"Changed Symbol: {changed_symbol}")
-            parts.append(f"Impact Score: {impact_score:.1f} / 100")
-            parts.append(f"Dependency Depth: {dep_depth}")
-            parts.append(f"Affected Functions ({len(affected_fns)}): {', '.join(affected_fns[:10])}")
-            parts.append(f"Affected Modules ({len(affected_mods)}): {', '.join(affected_mods[:10])}")
-            if critical_paths:
-                parts.append(f"Critical Paths:")
-                for path in critical_paths[:3]:
-                    parts.append(f"  → {' → '.join(path)}")
+            if impact_score > 0 or affected_fns or critical_paths:
+                parts.append(f"\n--- GRAPH IMPACT ANALYSIS ---")
+                parts.append(f"Changed Symbol: {changed_symbol}")
+                parts.append(f"Impact Score: {impact_score:.1f} / 100")
+                parts.append(f"Dependency Depth: {dep_depth}")
+                parts.append(f"Affected Functions ({len(affected_fns)}): {', '.join(affected_fns[:10])}")
+                parts.append(f"Affected Modules ({len(affected_mods)}): {', '.join(affected_mods[:10])}")
+                if critical_paths:
+                    parts.append(f"Critical Paths:")
+                    for path in critical_paths[:3]:
+                        parts.append(f"  → {' → '.join(path)}")
 
         # Impact Analyst Report (injected if available)
         if context.get("impact_report"):
@@ -107,20 +119,15 @@ class AgentManager:
             parts.append(fork_content)
 
         if previous_messages:
-            parts.append(f"\n=== DEBATE HISTORY ===")
+            parts.append(f"\n=== DEBATE HISTORY / STATE ===")
             for i, msg in enumerate(previous_messages):
-                role = msg.get("agent_role", msg.get("role", f"Agent {i+1}"))
-                parts.append(f"\n[{role}]")
-                # Show key fields
-                for key in ["analysis", "rebuttal", "rationale", "verification_summary"]:
-                    if msg.get(key):
-                        parts.append(f"{key.upper()}: {msg[key]}")
-                evidence = msg.get("evidence_provided", [])
-                if evidence:
-                    parts.append(f"EVIDENCE ({len(evidence)} items):")
-                    for ev in evidence[:3]:  # Cap at 3 to avoid prompt explosion
-                        ev_str = ev if isinstance(ev, str) else f"[{ev.get('source','?')}] {ev.get('description','?')} (strength={ev.get('strength',0)})"
-                        parts.append(f"  - {ev_str}")
+                if isinstance(msg, dict) and "current_position" in msg:
+                    # New Debate State structure
+                    parts.append(f"Round Position: {msg.get('current_position')}")
+                    parts.append(f"Opponent Claims: {json.dumps(msg.get('opponent_claims', {}), indent=2)}")
+                else:
+                    # Fallback or Judge parsing string
+                    parts.append(f"\n{json.dumps(msg, indent=2)}")
 
         if extra_instruction:
             parts.append(f"\n=== YOUR TASK ===")
@@ -163,7 +170,7 @@ class AgentManager:
             raise ValueError(f"Unknown agent type: {agent_type}")
 
         system_prompt = agent.build_system_prompt()
-        user_prompt = self._build_user_prompt(context, previous_messages, extra)
+        user_prompt = self._build_user_prompt(context, previous_messages, extra, agent_type=agent_type)
 
         logger.info(f"Prompting {agent_type} (context_len={len(user_prompt)})")
         response = self.llm.generate(system_prompt, user_prompt, schema=schema)
@@ -178,7 +185,7 @@ class AgentManager:
             "Derive risk_level from impact_score. Describe the dependency chain from critical_paths. "
             "List at least one key_risk per affected_function if the list is non-empty."
         )
-        user_prompt = self._build_user_prompt(context, extra_instruction=extra)
+        user_prompt = self._build_user_prompt(context, extra_instruction=extra, agent_type="impact_analyst")
         logger.info(f"Prompting impact_analyst (context_len={len(user_prompt)})")
         response = self.llm.generate(system_prompt, user_prompt, schema=ImpactReport)
         response["agent_role"] = "impact_analyst"
@@ -204,7 +211,7 @@ class AgentManager:
             raise ValueError(f"Rebuttal only supported for advocate/defender, got: {agent_type}")
 
         system_prompt = agent.build_system_prompt()
-        user_prompt = self._build_user_prompt(context, [opposing_argument], extra)
+        user_prompt = self._build_user_prompt(context, [opposing_argument], extra, agent_type=agent_type)
 
         logger.info(f"Prompting {agent_type} rebuttal (context_len={len(user_prompt)})")
         response = self.llm.generate(system_prompt, user_prompt, schema=RebuttalSchema)
