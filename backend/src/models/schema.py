@@ -228,6 +228,7 @@ class GraphNode(Base):
     __tablename__ = "graph_nodes"
     id = Column(Integer, primary_key=True, index=True)
     repository_id = Column(Integer, ForeignKey("repositories.id"), index=True)
+    scan_id = Column(Integer, ForeignKey("repository_scans.id"), nullable=True, index=True)  # snapshot versioning
     node_name = Column(String, index=True)           # e.g. "decode_token"
     node_type = Column(Enum(NodeType))               # MODULE | CLASS | FUNCTION | INTERFACE
     file_path = Column(String)                       # e.g. "src/auth/jwt.py"
@@ -253,4 +254,30 @@ class ImpactAnalysis(Base):
     dependency_depth = Column(Integer)               # BFS depth reached
     critical_paths = Column(JSON)                    # list of path lists
     impact_score = Column(Float)                     # 0.0 – 100.0
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Repository Knowledge Layer — File Summaries (rag_plan.md Phase 2)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class FileSummary(Base):
+    """
+    Stores a compact semantic summary for each file in a repository snapshot.
+    Generated during scan time by FileSummaryService.
+    Queried at debate time by RetrievalOrchestratorService.
+    """
+    __tablename__ = "file_summaries"
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(Integer, ForeignKey("repository_scans.id"), index=True)
+    repository_id = Column(Integer, ForeignKey("repositories.id"), index=True)
+    file_path = Column(String, index=True)           # relative path e.g. "src/auth/jwt.py"
+    language = Column(String, nullable=True)         # "python", "typescript", etc.
+    summary_text = Column(Text)                      # compact human-readable summary
+    symbol_count = Column(Integer, default=0)        # number of top-level symbols extracted
+    import_count = Column(Integer, default=0)        # number of imports
+    line_count = Column(Integer, default=0)          # total lines in the file
+    exported_symbols = Column(JSON, nullable=True)   # list of top-level symbol names
+    imported_modules = Column(JSON, nullable=True)   # list of imported module names
+    is_stale = Column(Boolean, default=False)        # True after re-scan invalidation
     created_at = Column(DateTime, default=datetime.utcnow)

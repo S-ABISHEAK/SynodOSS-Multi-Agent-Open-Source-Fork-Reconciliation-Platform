@@ -37,6 +37,7 @@ class ImpactAnalyzerService:
         graph: nx.DiGraph,
         changed_symbol: str,
         repository_id: int,
+        scan_id: int,
         reconciliation_unit_id: Optional[int] = None,
     ) -> dict:
         """
@@ -48,7 +49,7 @@ class ImpactAnalyzerService:
             critical_paths, impact_score (0–100)
         """
         # Resolve the starting node id from the symbol name
-        source_id = self._find_node_id(changed_symbol, repository_id)
+        source_id = self._find_node_id(changed_symbol, repository_id, scan_id)
 
         if source_id is None or source_id not in graph:
             logger.warning(
@@ -264,9 +265,10 @@ class ImpactAnalyzerService:
     # Helpers
     # ──────────────────────────────────────────────────────────────
 
-    def _find_node_id(self, symbol_name: str, repository_id: int) -> Optional[int]:
+    def _find_node_id(self, symbol_name: str, repository_id: int, scan_id: int) -> Optional[int]:
         row = self.db.query(GraphNode).filter_by(
             repository_id=repository_id,
+            scan_id=scan_id,
             node_name=symbol_name,
         ).first()
         return row.id if row else None

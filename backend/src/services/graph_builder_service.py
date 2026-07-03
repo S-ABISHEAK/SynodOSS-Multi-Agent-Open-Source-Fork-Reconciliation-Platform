@@ -36,13 +36,14 @@ class GraphBuilderService:
     # Public API
     # ──────────────────────────────────────────────────────────────
 
-    def build_graph(self, repository_id: int, repo_path: str) -> nx.DiGraph:
+    def build_graph(self, repository_id: int, scan_id: int, repo_path: str) -> nx.DiGraph:
         """
         Parse the entire repository, extract nodes and edges, persist them,
         and return an in-memory NetworkX DiGraph for traversal.
 
         Args:
             repository_id: DB id of the Repository row.
+            scan_id: DB id of the RepositoryScan row (for snapshot versioning).
             repo_path: Absolute path to the cloned repository on disk.
 
         Returns:
@@ -54,7 +55,7 @@ class GraphBuilderService:
 
         # --- Pass 1: Extract all nodes from all supported files ---
         py_files = self._find_python_files(repo_path)
-        logger.info(f"[graph_builder] repo={repository_id} | found {len(py_files)} Python files")
+        logger.info(f"[graph_builder] repo={repository_id} scan={scan_id} | found {len(py_files)} Python files")
 
         for file_path in py_files:
             relative_path = os.path.relpath(file_path, repo_path).replace("\\", "/")
@@ -63,6 +64,7 @@ class GraphBuilderService:
             for node_data in nodes:
                 db_node = self._get_or_create_node(
                     repository_id=repository_id,
+                    scan_id=scan_id,
                     node_name=node_data["name"],
                     node_type=node_data["type"],
                     file_path=relative_path,
@@ -100,27 +102,34 @@ class GraphBuilderService:
 
         self.db.commit()
         logger.info(
-            f"[graph_builder] repo={repository_id} | "
+            f"[graph_builder] repo={repository_id} scan={scan_id} | "
             f"nodes={graph.number_of_nodes()} edges={graph.number_of_edges()}"
         )
         return graph
 
-    def load_graph(self, repository_id: int) -> nx.DiGraph:
+    def load_graph(self, repository_id: int, scan_id: Optional[int] = None) -> nx.DiGraph:
         """
         Reconstruct the NetworkX DiGraph from persisted DB rows.
-        Used when graph was already built and only traversal is needed.
+        If scan_id is provided, loads only nodes from that snapshot.
+        If scan_id is None, loads all nodes for the repository (legacy behaviour).
         """
         graph = nx.DiGraph()
-        nodes = self.db.query(GraphNode).filter_by(repository_id=repository_id).all()
+        query = self.db.query(GraphNode).filter_by(repository_id=repository_id)
+        if scan_id is not None:
+            query = query.filter(GraphNode.scan_id == scan_id)
+        nodes = query.all()
         for n in nodes:
             graph.add_node(n.id, name=n.node_name, node_type=n.node_type.value, file_path=n.file_path)
 
-        edges = (
-            self.db.query(GraphEdge)
-            .join(GraphNode, GraphEdge.source_node_id == GraphNode.id)
-            .filter(GraphNode.repository_id == repository_id)
-            .all()
-        )
+        node_ids = [n.id for n in nodes]
+        if node_ids:
+            edges = (
+                self.db.query(GraphEdge)
+                .filter(GraphEdge.source_node_id.in_(node_ids))
+                .all()
+            )
+        else:
+            edges = []
         for e in edges:
             graph.add_edge(e.source_node_id, e.target_node_id, edge_type=e.edge_type.value)
 
@@ -265,14 +274,16 @@ class GraphBuilderService:
     def _get_or_create_node(
         self,
         repository_id: int,
+        scan_id: int,
         node_name: str,
         node_type: NodeType,
         file_path: str,
         metadata: dict,
     ) -> GraphNode:
-        """Get existing node or create a new one (prevents duplicate nodes)."""
+        """Get existing node for this (repository, scan, file, name) or create a new one."""
         existing = self.db.query(GraphNode).filter_by(
             repository_id=repository_id,
+            scan_id=scan_id,
             node_name=node_name,
             file_path=file_path,
         ).first()
@@ -280,6 +291,7 @@ class GraphBuilderService:
             return existing
         node = GraphNode(
             repository_id=repository_id,
+            scan_id=scan_id,
             node_name=node_name,
             node_type=node_type,
             file_path=file_path,

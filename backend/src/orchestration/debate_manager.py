@@ -11,8 +11,12 @@ import traceback
 logger = logging.getLogger(__name__)
 
 CONFIDENCE_ESCALATION_THRESHOLD = 0.65
-# Seconds to wait between LLM rounds to reduce Groq 429s
-INTER_ROUND_DELAY = 2
+# Seconds to wait between LLM rounds — 1s is enough for llama-3.1-8b-instant
+INTER_ROUND_DELAY = 1
+
+# Max chars for each claim string stored in DebateState.opponent_claims
+# to prevent token bloat in round 2 prompts.
+_CLAIM_MAX_CHARS = 500
 
 
 class DebateManager:
@@ -98,11 +102,15 @@ class DebateManager:
             self._save_msg(db, debate.id, 1, "advocate", adv_res)
             self._save_msg(db, debate.id, 1, "defender", def_res)
 
-            # Update state with Round 1 claims
+            # Update state with Round 1 claims (truncated to avoid token bloat in Round 2)
+            def _cap(s):
+                s = str(s)
+                return s[:_CLAIM_MAX_CHARS] + "..." if len(s) > _CLAIM_MAX_CHARS else s
+
             debate_state.current_position = "Round 1 Complete"
             debate_state.opponent_claims = {
-                "advocate_claims": adv_res.get("analysis", ""),
-                "defender_claims": def_res.get("analysis", "")
+                "advocate_claims": _cap(adv_res.get("analysis", "")),
+                "defender_claims": _cap(def_res.get("analysis", ""))
             }
             db.commit()
             time.sleep(INTER_ROUND_DELAY)

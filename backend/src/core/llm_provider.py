@@ -1,34 +1,84 @@
 from groq import Groq
 import json
+import logging
 from src.core.config import settings
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
+# Max INPUT tokens sent per request — prevents runaway context costs.
+# llama-3.1-8b-instant has a 128k context window, but we cap at 2500 tokens
+# of input to stay well within the free-tier TPD budget (100k/day shared).
+# 7 agents × 2500 input = 17500 input tokens per debate maximum.
+MAX_INPUT_TOKENS = 2500
+_CHARS_PER_TOKEN = 4  # fast approximation
+
+# Per-role output caps: smaller roles get fewer output tokens to save budget.
+AGENT_MAX_TOKENS = {
+    "impact_analyst":   512,
+    "advocate":         600,
+    "defender":         600,
+    "architect":        700,
+    "advocate_rebuttal": 400,
+    "defender_rebuttal": 400,
+    "judge":            512,
+    "default":          600,
+}
+
+
 class LLMProvider:
     def __init__(self):
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "llama-3.1-8b-instant"
         if settings.GROQ_API_KEY:
             self.client = Groq(api_key=settings.GROQ_API_KEY)
         else:
             self.client = None
-        
-    def generate(self, system_prompt: str, user_prompt: str, schema: type[BaseModel] = None) -> dict:
+
+    @staticmethod
+    def _hard_cap_prompt(text: str, max_tokens: int = MAX_INPUT_TOKENS) -> str:
+        """Truncate prompt text to stay within the token budget."""
+        max_chars = max_tokens * _CHARS_PER_TOKEN
+        if len(text) <= max_chars:
+            return text
+        suffix = "\n... [CONTEXT TRUNCATED — token budget enforced]"
+        return text[: max_chars - len(suffix)] + suffix
+
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[BaseModel] = None,
+        agent_role: str = "default",
+    ) -> dict:
+        max_output_tokens = AGENT_MAX_TOKENS.get(agent_role, AGENT_MAX_TOKENS["default"])
+
+        # ── Hard-cap inputs ──────────────────────────────────────────
+        system_prompt = self._hard_cap_prompt(system_prompt, max_tokens=400)
+        user_prompt = self._hard_cap_prompt(user_prompt, max_tokens=MAX_INPUT_TOKENS)
+
+        input_est = (len(system_prompt) + len(user_prompt)) // _CHARS_PER_TOKEN
+        logger.info(
+            f"[llm] role={agent_role} input_est={input_est}tok "
+            f"max_output={max_output_tokens}tok model={self.model}"
+        )
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-        
+
         if schema:
             schema_instruction = (
                 "\n\nCRITICAL: You MUST output ONLY valid JSON matching this schema:\n"
                 f"{json.dumps(schema.model_json_schema())}"
             )
             messages[0]["content"] += schema_instruction
-            
+
         # If no API key, use structured mock that matches the real schemas
         if not self.client:
-            print("WARNING: GROQ_API_KEY is not set. Using structured mock LLM response.")
+            logger.warning("GROQ_API_KEY is not set. Using structured mock LLM response.")
             return self._mock_response(schema)
-            
+
         import time
         max_retries = 5
         base_delay = 2
@@ -39,34 +89,46 @@ class LLMProvider:
                     messages=messages,
                     model=self.model,
                     temperature=0.2,
-                    max_tokens=settings.MAX_TOKENS_PER_AGENT,
+                    max_tokens=max_output_tokens,
                     response_format={"type": "json_object"} if schema else None
                 )
-                
+
+                usage = getattr(response, "usage", None)
+                if usage:
+                    logger.info(
+                        f"[llm] role={agent_role} "
+                        f"prompt_tokens={usage.prompt_tokens} "
+                        f"completion_tokens={usage.completion_tokens} "
+                        f"total_tokens={usage.total_tokens}"
+                    )
+
                 content = response.choices[0].message.content
                 if schema:
                     try:
                         return json.loads(content)
                     except json.JSONDecodeError as e:
-                        print(f"Failed to parse JSON from LLM response: {content}")
+                        logger.error(f"Failed to parse JSON from LLM response: {content[:200]}")
                         if attempt == max_retries - 1:
                             raise ValueError(f"LLM returned invalid JSON: {content}") from e
-                        continue # Retry on bad JSON
+                        continue
                 return {"content": content}
-                
+
             except Exception as e:
                 error_str = str(e).lower()
                 if "429" in error_str or "rate limit" in error_str:
                     delay = base_delay * (2 ** attempt)
-                    print(f"Rate limit hit. Retrying in {delay} seconds (Attempt {attempt + 1}/{max_retries})...")
+                    logger.warning(
+                        f"[llm] rate limit hit. Retrying in {delay}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
                     time.sleep(delay)
                     if attempt == max_retries - 1:
-                        print("Exhausted all retries for rate limits.")
+                        logger.error("[llm] Exhausted all retries for rate limits.")
                         raise e
                 else:
                     import traceback
                     traceback.print_exc()
-                    print(f"LLM Generation Error: {e}")
+                    logger.error(f"[llm] Generation error: {e}")
                     raise e
 
     def _mock_response(self, schema) -> dict:

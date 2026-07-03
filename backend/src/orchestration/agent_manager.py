@@ -173,7 +173,7 @@ class AgentManager:
         user_prompt = self._build_user_prompt(context, previous_messages, extra, agent_type=agent_type)
 
         logger.info(f"Prompting {agent_type} (context_len={len(user_prompt)})")
-        response = self.llm.generate(system_prompt, user_prompt, schema=schema)
+        response = self.llm.generate(system_prompt, user_prompt, schema=schema, agent_role=agent_type)
         response["agent_role"] = agent_type  # Ensure agent_role is always set
         return response
 
@@ -187,7 +187,7 @@ class AgentManager:
         )
         user_prompt = self._build_user_prompt(context, extra_instruction=extra, agent_type="impact_analyst")
         logger.info(f"Prompting impact_analyst (context_len={len(user_prompt)})")
-        response = self.llm.generate(system_prompt, user_prompt, schema=ImpactReport)
+        response = self.llm.generate(system_prompt, user_prompt, schema=ImpactReport, agent_role="impact_analyst")
         response["agent_role"] = "impact_analyst"
         return response
 
@@ -214,6 +214,6 @@ class AgentManager:
         user_prompt = self._build_user_prompt(context, [opposing_argument], extra, agent_type=agent_type)
 
         logger.info(f"Prompting {agent_type} rebuttal (context_len={len(user_prompt)})")
-        response = self.llm.generate(system_prompt, user_prompt, schema=RebuttalSchema)
+        response = self.llm.generate(system_prompt, user_prompt, schema=RebuttalSchema, agent_role=f"{agent_type}_rebuttal")
         response["agent_role"] = f"{agent_type}_rebuttal"
         return response
