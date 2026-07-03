@@ -317,7 +317,7 @@ SynodOSS uses **3 terminals**.
 ```bash
 cd backend
 
-uv run uvicorn main:app --reload
+uv run python -m uvicorn main:app --reload
 ```
 
 Runs:
