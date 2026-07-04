@@ -58,6 +58,7 @@ export default function GraphExplorer() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   
   const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [selectedFile, setSelectedFile] = useState<any>(null);
   const [ragData, setRagData] = useState<any>(null);
   const [loadingRag, setLoadingRag] = useState(false);
 
@@ -78,15 +79,17 @@ export default function GraphExplorer() {
     loadGraph();
   }, [scanId, setNodes, setEdges]);
 
-  const onNodeClick = useCallback(async (_: any, node: Node) => {
-    setSelectedNode(node);
-    
-    // Check if there is a conflict unit for this node in the scan's conflicts
+  const fetchRag = useCallback(async (filePath: string) => {
     try {
       setLoadingRag(true);
       const conflicts = await scanApi.getConflicts(parseInt(scanId!));
-      const conflict = conflicts.find((c: any) => c.file_path === node.data.filePath);
-      
+      // Try exact match first, then partial match (relative vs absolute paths)
+      let conflict = conflicts.find((c: any) => c.file_path === filePath);
+      if (!conflict) {
+        conflict = conflicts.find((c: any) =>
+          c.file_path.endsWith(filePath) || filePath.endsWith(c.file_path)
+        );
+      }
       if (conflict && conflict.unit_id) {
         const rag = await scanApi.ragInspect(parseInt(scanId!), conflict.unit_id);
         setRagData(rag);
@@ -100,6 +103,19 @@ export default function GraphExplorer() {
       setLoadingRag(false);
     }
   }, [scanId]);
+
+  const onNodeClick = useCallback(async (_: any, node: Node) => {
+    setSelectedNode(node);
+    setSelectedFile(null);
+    await fetchRag(node.data.filePath as string);
+  }, [fetchRag]);
+
+  const onFileSummaryClick = useCallback(async (fs: any) => {
+    setSelectedFile(fs);
+    setSelectedNode(null);
+    setRagData(null);
+    await fetchRag(fs.file_path);
+  }, [fetchRag]);
 
   if (loading) {
     return (
@@ -168,16 +184,27 @@ export default function GraphExplorer() {
               File Summaries
             </h3>
             <div className="overflow-y-auto space-y-3 flex-1 pr-2">
-              {graphData?.file_summaries.map((fs: any, i: number) => (
-                <div key={i} className="p-3 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors">
-                  <p className="text-sm font-mono text-indigo-300 break-all mb-2">{fs.file_path}</p>
-                  <p className="text-xs text-white/60 mb-2 line-clamp-3">{fs.summary_text}</p>
-                  <div className="flex gap-3 text-xs text-white/40">
-                    <span>Symbols: {fs.symbol_count}</span>
-                    <span>Imports: {fs.import_count}</span>
-                  </div>
-                </div>
-              ))}
+              {graphData?.file_summaries.map((fs: any, i: number) => {
+                const isSelected = selectedFile?.file_path === fs.file_path;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => onFileSummaryClick(fs)}
+                    className={`w-full text-left p-3 border rounded-lg transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-indigo-500/20 border-indigo-500/50'
+                        : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-indigo-500/30'
+                    }`}
+                  >
+                    <p className="text-sm font-mono text-indigo-300 break-all mb-2">{fs.file_path}</p>
+                    <p className="text-xs text-white/60 mb-2 line-clamp-3">{fs.summary_text}</p>
+                    <div className="flex gap-3 text-xs text-white/40">
+                      <span>Symbols: {fs.symbol_count}</span>
+                      <span>Imports: {fs.import_count}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </GlassCard>
         </div>
@@ -208,9 +235,9 @@ export default function GraphExplorer() {
               Live RAG Inspector
             </h3>
             
-            {!selectedNode ? (
+            {!selectedNode && !selectedFile ? (
               <div className="flex-1 flex items-center justify-center text-center p-6 text-white/40">
-                <p>Click a node in the graph to inspect its RAG context bundle.</p>
+                <p>Click a node in the graph <span className="text-indigo-400">or a file</span> in the sidebar to inspect its RAG context bundle.</p>
               </div>
             ) : loadingRag ? (
               <div className="flex-1 flex items-center justify-center">
@@ -219,11 +246,15 @@ export default function GraphExplorer() {
             ) : !ragData ? (
               <div className="flex-1 p-4 text-center">
                 <AlertCircle className="w-8 h-8 text-amber-500/50 mx-auto mb-2" />
-                <p className="text-white/60 text-sm">No conflict unit exists for this specific symbol yet.</p>
+                <p className="text-white/60 text-sm">No conflict unit found for this file. It may not have any tracked conflicts.</p>
                 <div className="mt-6 p-4 bg-white/5 rounded-lg text-left">
-                  <p className="text-xs font-bold text-white/50 mb-1">NODE DETAILS</p>
-                  <p className="text-sm font-mono text-indigo-300 break-all">{selectedNode.data.label}</p>
-                  <p className="text-xs text-white/70 mt-1">{selectedNode.data.filePath}</p>
+                  <p className="text-xs font-bold text-white/50 mb-1">{selectedNode ? 'NODE DETAILS' : 'FILE DETAILS'}</p>
+                  <p className="text-sm font-mono text-indigo-300 break-all">
+                    {selectedNode ? selectedNode.data.label : selectedFile?.file_path}
+                  </p>
+                  {selectedNode && (
+                    <p className="text-xs text-white/70 mt-1">{selectedNode.data.filePath}</p>
+                  )}
                 </div>
               </div>
             ) : (

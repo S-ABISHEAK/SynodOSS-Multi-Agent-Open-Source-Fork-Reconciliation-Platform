@@ -28,7 +28,7 @@ AGENT_MAX_TOKENS = {
 
 class LLMProvider:
     def __init__(self):
-        self.model = "llama-3.1-8b-instant"
+        self.model = "Llama-3.3-70B-Versatile"
         if settings.GROQ_API_KEY:
             self.client = Groq(api_key=settings.GROQ_API_KEY)
         else:
