@@ -133,6 +133,9 @@ class ConflictContextBuilder:
             "critical_paths": bundle.critical_paths,
             "dependency_depth": bundle.dependency_depth,
             "architectural_layer": bundle.architectural_layer,
+            # EPACE: Enterprise policy context injected into agent prompts
+            "enterprise_policies": bundle.policy_context,
+            "_retrieved_policy_chunks": bundle.retrieved_policy_chunks,  # for PolicyAnalyzer (internal)
         }
 
     # ──────────────────────────────────────────────────────────────

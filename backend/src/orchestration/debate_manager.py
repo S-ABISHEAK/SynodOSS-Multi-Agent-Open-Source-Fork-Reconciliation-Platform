@@ -182,6 +182,34 @@ class DebateManager:
             debate.verification_score = consensus["verification_score"]
             debate.token_usage = consensus.get("token_usage", 0)
 
+            # ── Policy Impact Analysis (EPACE) ──────────────────────────
+            try:
+                from src.services.policy.policy_analyzer import PolicyAnalyzer
+                retrieved_chunks = context.get("_retrieved_policy_chunks", [])
+                all_agent_msgs = [adv_res, def_res, adv_rebuttal, def_rebuttal, arch_res, judge_res]
+                policy_analyzer = PolicyAnalyzer(db)
+                policy_summary = policy_analyzer.analyze(
+                    debate_id=debate.id,
+                    retrieved_chunks=retrieved_chunks,
+                    agent_messages=all_agent_msgs,
+                    arch_resolution=arch_res,
+                )
+                logger.info(
+                    f"[debate={debate.id}] Policy impact: risk={policy_summary.risk_level.value} "
+                    f"escalate={policy_summary.escalation_needed} score={policy_summary.policy_impact_score}"
+                )
+                # HIGH/CRITICAL policy risk forces escalation regardless of confidence
+                if policy_summary.escalation_needed and debate.confidence >= CONFIDENCE_ESCALATION_THRESHOLD:
+                    logger.warning(
+                        f"[debate={debate.id}] Policy risk '{policy_summary.risk_level.value}' "
+                        f"forces escalation despite confidence={debate.confidence:.2f}"
+                    )
+                    debate.status = DebateStatus.escalated
+                    db.commit()
+                    return
+            except Exception as policy_err:
+                logger.warning(f"[debate={debate.id}] PolicyAnalyzer failed (non-fatal): {policy_err}")
+
             # Auto-escalate if confidence is below threshold
             if consensus["confidence"] < CONFIDENCE_ESCALATION_THRESHOLD:
                 debate.status = DebateStatus.escalated

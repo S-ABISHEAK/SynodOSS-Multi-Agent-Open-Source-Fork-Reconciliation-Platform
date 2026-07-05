@@ -3,10 +3,11 @@ import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { AnimatedLogo } from './AnimatedLogo';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Github, Moon, Sun, User, Menu } from 'lucide-react';
+import { Github, Moon, Sun, User, Menu, Shield } from 'lucide-react';
 
 const navItems = [
   { label: 'Dashboard', href: '/' },
+  { label: 'Governance', href: '/governance', icon: <Shield size={13} className="inline mr-1 -mt-0.5" /> },
 ];
 
 export const FloatingNav: React.FC = () => {

@@ -61,6 +61,11 @@ class RetrievalBundle:
     # Diff
     diff_preview: str = ""
 
+    # Enterprise Policy context (EPACE)
+    policy_context: str = ""                       # Formatted policy bundle for agent prompts
+    retrieved_policy_chunks: list = field(default_factory=list)  # list[RetrievedPolicyChunk]
+    policy_token_estimate: int = 0
+
     # Observability
     token_estimate: int = 0
     retrieval_source: str = "graph"   # "graph" | "fallback"
@@ -68,6 +73,10 @@ class RetrievalBundle:
     def is_empty(self) -> bool:
         """Returns True if no useful knowledge was found (triggers fallback)."""
         return not self.file_summary and not self.callers and not self.callees
+
+    def has_policy_context(self) -> bool:
+        """Returns True if enterprise policy context was retrieved."""
+        return bool(self.policy_context)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -138,6 +147,9 @@ class RetrievalOrchestratorService:
         bundle.file_summary = TokenBudget.truncate_to_budget(
             bundle.file_summary, TokenBudget.MAX_TOKENS_FILE_SUMMARY, label="file_summary"
         )
+
+        # Step 7: Retrieve enterprise policy context (EPACE)
+        bundle = self._attach_policy_context(bundle)
 
         # Compute total token estimate for observability
         bundle.token_estimate = self._estimate_bundle_tokens(bundle)
@@ -288,6 +300,34 @@ class RetrievalOrchestratorService:
 
         return result
 
+    def _attach_policy_context(self, bundle: RetrievalBundle) -> RetrievalBundle:
+        """Retrieve and attach enterprise policy context to the bundle."""
+        try:
+            from src.services.policy.policy_retriever import PolicyRetriever
+            from src.services.policy.policy_context_builder import build_policy_context
+
+            # Build a query from the diff + file summary (most relevant signals)
+            query = f"{bundle.diff_preview[:500]} {bundle.file_summary[:300]}".strip()
+            if not query:
+                return bundle
+
+            retriever = PolicyRetriever(self.db)
+            chunks = retriever.retrieve(query)
+            policy_bundle = build_policy_context(chunks)
+
+            bundle.retrieved_policy_chunks = chunks
+            bundle.policy_context = policy_bundle.formatted_context
+            bundle.policy_token_estimate = policy_bundle.total_token_estimate
+
+            if chunks:
+                logger.info(
+                    f"[retrieval] policy_chunks={len(chunks)} "
+                    f"policy_tokens={bundle.policy_token_estimate}"
+                )
+        except Exception as e:
+            logger.warning(f"[retrieval] Policy context retrieval failed (non-fatal): {e}")
+        return bundle
+
     def _estimate_bundle_tokens(self, bundle: RetrievalBundle) -> int:
         """Estimate total token count of the bundle for observability logging."""
         parts = [
@@ -299,5 +339,6 @@ class RetrievalOrchestratorService:
             " ".join(bundle.affected_modules),
             " ".join(str(p) for p in bundle.critical_paths),
             " ".join(bundle.related_file_summaries.values()),
+            bundle.policy_context,
         ]
         return sum(TokenBudget.estimate_tokens(p) for p in parts)

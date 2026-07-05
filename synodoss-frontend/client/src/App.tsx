@@ -8,6 +8,7 @@ import Dashboard from "./pages/Dashboard";
 import ScanDetail from "./pages/ScanDetail";
 import DebateWorkspace from "./pages/DebateWorkspace";
 import GraphExplorer from "./pages/GraphExplorer";
+import EnterpriseGovernance from "./pages/EnterpriseGovernance";
 import { FloatingNav } from "./components/FloatingNav";
 import { MouseSpotlight } from "./components/MouseSpotlight";
 import { CommandPalette } from "./components/CommandPalette";
@@ -19,6 +20,7 @@ function Router() {
       <main className="pt-24">
         <Switch>
           <Route path={"/"} component={Dashboard} />
+          <Route path={"/governance"} component={EnterpriseGovernance} />
           <Route path={"/scans/:id/graph"} component={GraphExplorer} />
           <Route path={"/scans/:id"} component={ScanDetail} />
           <Route path={"/debates/:id"} component={DebateWorkspace} />

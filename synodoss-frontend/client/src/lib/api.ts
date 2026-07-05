@@ -105,4 +105,45 @@ export const debateApi = {
   },
 };
 
+// ── Policy / EPACE Endpoints ───────────────────────────────────────────────
+export const policyApi = {
+  uploadPolicy: async (file: File, name?: string, version = '1.0', priority = 'MEDIUM') => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (name) formData.append('name', name);
+    formData.append('version', version);
+    formData.append('priority', priority);
+    const response = await api.post('/policies/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000, // embedding can take a moment
+    });
+    return response.data;
+  },
+
+  listPolicies: async () => {
+    const response = await api.get('/policies');
+    return response.data;
+  },
+
+  getPolicy: async (policyId: number) => {
+    const response = await api.get(`/policies/${policyId}`);
+    return response.data;
+  },
+
+  deletePolicy: async (policyId: number) => {
+    const response = await api.delete(`/policies/${policyId}`);
+    return response.data;
+  },
+
+  getPolicyChunks: async (policyId: number) => {
+    const response = await api.get(`/policies/${policyId}/chunks`);
+    return response.data;
+  },
+
+  getPolicyImpact: async (debateId: number) => {
+    const response = await api.get(`/debates/${debateId}/policy-impact`);
+    return response.data;
+  },
+};
+
 export default api;

@@ -64,6 +64,10 @@ class AgentResponseSchema(BaseModel):
         None,
         description="Brief description of what you propose should happen"
     )
+    referenced_policies: List[str] = Field(
+        default_factory=list,
+        description="List of enterprise policy names (e.g. 'SEC-004', 'Auth Policy v2') that directly affect your argument. Only cite policies that were provided in the enterprise_policies context."
+    )
     confidence: float = Field(
         ...,
         description="Confidence in your argument (0.0 to 1.0)"
@@ -125,6 +129,10 @@ class RebuttalSchema(BaseModel):
     evidence_provided: List[Evidence] = Field(
         default_factory=list,
         description="New evidence supporting your rebuttal."
+    )
+    referenced_policies: List[str] = Field(
+        default_factory=list,
+        description="Enterprise policy names that support your rebuttal position."
     )
     confidence: float = Field(..., description="Updated confidence after hearing the opposing argument (0.0 to 1.0)")
 
@@ -206,6 +214,7 @@ The context you receive contains:
 - fork_file_content: the full file as it exists in the fork
 - upstream_commit_messages: git log messages explaining WHY upstream made changes
 - ast_summary: a structured diff of added/removed/modified functions and classes
+- enterprise_policies: (if present) relevant enterprise policies that apply to this conflict
 
 RULES:
 1. Ground ALL evidence in the provided context. Reference specific function names, class names, or line numbers.
@@ -213,4 +222,6 @@ RULES:
 3. If the context is insufficient to form a grounded claim, say so explicitly rather than speculating.
 4. When citing evidence, you MUST mark it as verified ONLY if you are absolutely certain it is in the context. UNVERIFIED evidence will be rejected by the Judge.
 5. NEVER cite unverified evidence. Hallucinations will be penalized heavily.
+6. If enterprise_policies are provided, reference any relevant policies by name in your referenced_policies field. NEVER invent policy names.
+7. The policy engine NEVER requires you to generate or modify code. Only note which policies are impacted and why.
 """

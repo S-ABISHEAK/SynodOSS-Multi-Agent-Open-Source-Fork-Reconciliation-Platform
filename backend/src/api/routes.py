@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from typing import Optional
 
 from src.core.database import get_db, SessionLocal
 from src.services.persistence_service import PersistenceService
@@ -440,6 +441,171 @@ def rag_inspect(scan_id: int, unit_id: int, db: Session = Depends(get_db)):
         "diff_preview": bundle.diff_preview,
         "is_empty": bundle.is_empty(),
         "fallback_used": bundle.retrieval_source == "fallback",
+    }
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EPACE — Enterprise Policy Engine Endpoints
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/policies/upload")
+async def upload_policy(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    version: str = Form("1.0"),
+    priority: str = Form("MEDIUM"),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload and ingest an enterprise policy document.
+    Supports: .md, .txt, .pdf, .docx, .json, .yaml/.yml
+    Idempotent: re-uploading the same file (same content hash) returns the existing policy.
+    """
+    from src.services.policy.policy_manager import PolicyManager
+
+    allowed_extensions = {".md", ".txt", ".pdf", ".docx", ".json", ".yaml", ".yml"}
+    import os
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(allowed_extensions)}"
+        )
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    manager = PolicyManager(db)
+    try:
+        policy = manager.ingest_policy(
+            file_bytes=file_bytes,
+            filename=file.filename or "policy.md",
+            name=name,
+            version=version,
+            priority=priority,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    return {
+        "policy_id": policy.id,
+        "name": policy.name,
+        "category": policy.category.value if policy.category else None,
+        "priority": policy.priority,
+        "version": policy.version,
+        "status": policy.status.value if policy.status else None,
+        "total_chunks": policy.total_chunks,
+        "created_at": policy.created_at.isoformat() if policy.created_at else None,
+    }
+
+
+@router.get("/policies")
+def list_policies(db: Session = Depends(get_db)):
+    """List all enterprise policies with metadata."""
+    from src.services.policy.policy_manager import PolicyManager
+    manager = PolicyManager(db)
+    policies = manager.list_policies()
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "category": p.category.value if p.category else None,
+            "priority": p.priority,
+            "version": p.version,
+            "status": p.status.value if p.status else None,
+            "file_name": p.file_name,
+            "total_chunks": p.total_chunks,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        }
+        for p in policies
+    ]
+
+
+@router.get("/policies/{policy_id}")
+def get_policy(policy_id: int, db: Session = Depends(get_db)):
+    """Get a single policy by ID."""
+    from src.services.policy.policy_manager import PolicyManager
+    manager = PolicyManager(db)
+    policy = manager.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    return {
+        "id": policy.id,
+        "name": policy.name,
+        "description": policy.description,
+        "category": policy.category.value if policy.category else None,
+        "priority": policy.priority,
+        "version": policy.version,
+        "status": policy.status.value if policy.status else None,
+        "file_name": policy.file_name,
+        "file_hash": policy.file_hash,
+        "total_chunks": policy.total_chunks,
+        "created_at": policy.created_at.isoformat() if policy.created_at else None,
+    }
+
+
+@router.delete("/policies/{policy_id}")
+def delete_policy(policy_id: int, db: Session = Depends(get_db)):
+    """Delete a policy and all its chunks."""
+    from src.services.policy.policy_manager import PolicyManager
+    manager = PolicyManager(db)
+    deleted = manager.delete_policy(policy_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    return {"message": f"Policy {policy_id} deleted successfully"}
+
+
+@router.get("/policies/{policy_id}/chunks")
+def get_policy_chunks(policy_id: int, db: Session = Depends(get_db)):
+    """Return the text chunks for a policy (for the Policy Explorer UI)."""
+    from src.services.policy.policy_manager import PolicyManager
+    manager = PolicyManager(db)
+    policy = manager.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    chunks = manager.get_policy_chunks(policy_id)
+    return {
+        "policy_id": policy_id,
+        "policy_name": policy.name,
+        "chunks": [
+            {
+                "chunk_index": c.chunk_index,
+                "chunk_text": c.chunk_text,
+                "token_count": c.token_count,
+            }
+            for c in chunks
+        ]
+    }
+
+
+@router.get("/debates/{id}/policy-impact")
+def get_debate_policy_impact(id: int, db: Session = Depends(get_db)):
+    """
+    Return the PolicyImpactResult for a debate.
+    Returns 404 if no policy analysis has been run (no policies uploaded, or
+    debate hasn't completed yet).
+    """
+    from src.models.schema import PolicyImpactResult
+    result = db.query(PolicyImpactResult).filter_by(debate_id=id).first()
+    if not result:
+        return {
+            "debate_id": id,
+            "available": False,
+            "message": "No policy impact analysis available. Upload enterprise policies first."
+        }
+    return {
+        "debate_id": id,
+        "available": True,
+        "affected_policies": result.affected_policies or [],
+        "risk_level": result.risk_level.value if result.risk_level else "LOW",
+        "business_impact": result.business_impact,
+        "escalation_needed": result.escalation_needed,
+        "policy_impact_score": result.policy_impact_score,
+        "created_at": result.created_at.isoformat() if result.created_at else None,
     }
 
 

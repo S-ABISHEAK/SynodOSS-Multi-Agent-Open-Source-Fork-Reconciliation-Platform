@@ -5,9 +5,10 @@ import { GlassCard } from '@/components/glass/GlassCard';
 import { GlassBadge } from '@/components/glass/GlassBadge';
 import { MetricCard } from '@/components/MetricCard';
 import { LoadingSpinner } from '@/components/glass/LoadingSpinner';
+import { PolicyImpactPanel } from '@/components/PolicyImpactPanel';
 import { debateApi, handleApiError } from '@/lib/api';
 import { toast } from 'sonner';
-import { Brain, CheckCircle, AlertCircle, MessageSquare, Code2 } from 'lucide-react';
+import { Brain, CheckCircle, AlertCircle, MessageSquare, Code2, Shield } from 'lucide-react';
 
 interface DebateRound {
   round: number;
@@ -183,7 +184,7 @@ export default function DebateWorkspace() {
           )}
         </div>
 
-        {/* Main Content Grid */}
+        {/* Main Content Grid: Transcript + Right Sidebar */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           {/* Debate Transcript (Center/Full) */}
           <div className="lg:col-span-2">
@@ -229,6 +230,17 @@ export default function DebateWorkspace() {
                             {/* Verification judge uses verification_summary */}
                             {!msg.analysis && !msg.rebuttal && msg.verification_summary && (
                               <p className="text-sm text-white/80 mb-2">{msg.verification_summary}</p>
+                            )}
+                            {/* EPACE: Referenced Policies badges */}
+                            {msg.referenced_policies && Array.isArray(msg.referenced_policies) && msg.referenced_policies.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                                <Shield className="w-3 h-3 text-indigo-400 shrink-0" />
+                                {(msg.referenced_policies as string[]).map((pname: string, pi: number) => (
+                                  <span key={pi} className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+                                    {pname}
+                                  </span>
+                                ))}
+                              </div>
                             )}
                             {msg.conceded_points && Array.isArray(msg.conceded_points) && msg.conceded_points.length > 0 && (
                               <div className="mt-2">
@@ -353,6 +365,14 @@ export default function DebateWorkspace() {
                 </p>
               </GlassCard>
             )}
+
+            {/* Policy Impact Panel (EPACE) */}
+            <div className="mt-6">
+              <PolicyImpactPanel
+                debateId={parseInt(debateId || '0')}
+                debateStatus={debateStatus}
+              />
+            </div>
           </div>
         </div>
 
